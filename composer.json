@@ -1,6 +1,6 @@
 {
     "name": "oilstone/system-status",
-    "description": "Monitor and score a variety of service types",
+    "description": "Monitor and score expectations for a variety of system integrations",
     "keywords": [],
     "homepage": "https://github.com/oilstone/system-status",
     "license": "MIT",
@@ -11,14 +11,13 @@
         }
     ],
     "require": {
-        "php": ">=7.4.0",
-        "guzzlehttp/guzzle": "^6.3|^7.2",
-        "illuminate/support": "^7.0|^8.0",
-        "ext-json": "*"
+        "php": ">=7.4.0"
     },
     "suggest": {
-        "oilstone/redis-cache": "Needed to support inbuilt redis monitor if an existing manager instance is not available",
-        "ext-pdo": "Needed to support inbuilt MySQL database monitor"
+        "oilstone/redis-cache": "Needed to support inbuilt Redis monitor if an existing manager instance is not available",
+        "guzzlehttp/guzzle": "Needed to support inbuilt HTTP and bearer token monitors",
+        "ext-pdo": "Needed to support inbuilt MySQL database monitor",
+        "ext-json": "Needed to support inbuilt bearer token monitor"
     },
     "autoload": {
         "psr-4": {

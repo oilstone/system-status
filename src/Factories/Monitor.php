@@ -2,7 +2,6 @@
 
 namespace Oilstone\SystemStatus\Factories;
 
-use Illuminate\Support\Str;
 use Oilstone\SystemStatus\Contracts\Monitor as MonitorContract;
 use Oilstone\SystemStatus\Exceptions\InvalidMonitorConfiguration;
 use Oilstone\SystemStatus\Exceptions\UnknownMonitorClassException;
@@ -38,12 +37,21 @@ class Monitor
         }
 
         if (is_array($config) && isset($config['type'])) {
-            $monitorType = lcfirst(Str::camel(strtolower($config['type'])));
+            $monitorType = static::getType($config['type']);
 
             return static::{$monitorType}($config);
         }
 
         throw new UnknownMonitorClassException($config);
+    }
+
+    /**
+     * @param $type
+     * @return string
+     */
+    protected static function getType($type): string
+    {
+        return lcfirst(str_replace(' ', '', ucwords(str_replace(['-', '_'], ' ', strtolower($type)))));
     }
 
     /**
