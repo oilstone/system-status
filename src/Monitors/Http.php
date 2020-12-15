@@ -1,5 +1,11 @@
 <?php
 
+/**
+ * @noinspection PhpUndefinedClassInspection
+ * @noinspection PhpUndefinedNamespaceInspection
+ * @noinspection PhpUndefinedMethodInspection
+ */
+
 namespace Oilstone\SystemStatus\Monitors;
 
 use GuzzleHttp\Client;

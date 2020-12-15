@@ -32,7 +32,7 @@ class MySql extends Monitor implements MonitorContract
     {
         parent::__construct($config);
 
-        if (!($config['pdo'] ?? false) && !(!($config['host'] ?? false) || !($config['user'] ?? false) || !($config['password'] ?? false) || !($config['database'] ?? false))) {
+        if (!($config['pdo'] ?? false) && !(($config['host'] ?? false) && ($config['user'] ?? false) && ($config['password'] ?? false) && ($config['database'] ?? false))) {
             throw new InvalidMonitorConfiguration('Missing required database configuration value for ' . $this->alias, $config);
         }
     }
