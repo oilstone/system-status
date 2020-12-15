@@ -1,0 +1,30 @@
+{
+    "name": "oilstone/system-status",
+    "description": "Monitor and score a variety of service types",
+    "keywords": [],
+    "homepage": "https://github.com/oilstone/system-status",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Online Solutions",
+            "email": "support@onlinesolutionsltd.com"
+        }
+    ],
+    "require": {
+        "php": ">=7.4.0",
+        "guzzlehttp/guzzle": "^6.3|^7.2",
+        "illuminate/support": "^7.0|^8.0",
+        "ext-json": "*"
+    },
+    "suggest": {
+        "oilstone/redis-cache": "Needed to support inbuilt redis monitor if an existing manager instance is not available",
+        "ext-pdo": "Needed to support inbuilt MySQL database monitor"
+    },
+    "autoload": {
+        "psr-4": {
+            "Oilstone\\SystemStatus\\": "src"
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
