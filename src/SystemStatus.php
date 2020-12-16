@@ -41,8 +41,8 @@ class SystemStatus
      */
     public static function isSystemOkay($categories = null): bool
     {
-        foreach (static::fetchMonitors($categories) as $monitor) {
-            if ($monitor->status() !== StatusCode::SYSTEM_OKAY) {
+        foreach (static::fetchMonitors($categories) as $next) {
+            if ($next['monitor']->status() !== StatusCode::SYSTEM_OKAY) {
                 return false;
             }
         }
@@ -65,7 +65,10 @@ class SystemStatus
 
         foreach ((array)$categories as $category) {
             foreach (static::$monitors[$category] ?? [] as $index => $monitor) {
-                static::$monitors[$category][$index] = $monitors[] = Monitor::make($monitor);
+                $monitors[] = [
+                    'category' => $category,
+                    'monitor' => static::$monitors[$category][$index] = Monitor::make($monitor),
+                ];
             }
         }
 
@@ -79,7 +82,11 @@ class SystemStatus
      */
     public static function averageScore($categories = null): int
     {
-        $scores = static::scores($categories);
+        $scores = [];
+
+        foreach (static::fetchMonitors($categories) as $next) {
+            $scores[] = $next['monitor']->score();
+        }
 
         return round(ceil(($scores ? array_sum($scores) / count($scores) : 0) / 100) * 100);
     }
@@ -93,9 +100,11 @@ class SystemStatus
     {
         $scores = [];
 
-        foreach (static::fetchMonitors($categories) as $monitor) {
-            /** @var Contracts\Monitor $monitor */
-            $scores[$monitor->alias()] = $monitor->score();
+        foreach (static::fetchMonitors($categories) as $next) {
+            $scores[$next['category']][$next['monitor']->alias()] = [
+                'score' => $next['monitor']->score(),
+                'rating' => StatusCode::toString($next['monitor']->score()),
+            ];
         }
 
         return $scores;
@@ -110,11 +119,18 @@ class SystemStatus
     {
         $errors = [];
 
-        foreach (static::fetchMonitors($categories) as $monitor) {
-            /** @var Contracts\Monitor $monitor */
-            $errors[$monitor->alias()] = (string)($monitor->error() ?? '');
+        foreach (static::fetchMonitors($categories) as $next) {
+            if ($next['monitor']->error()) {
+                $error = $next['monitor']->error()->getMessage();
+
+                if (!$error) {
+                    $error = (string)$next['monitor']->error();
+                }
+
+                $errors[$next['category']][$next['monitor']->alias()] = $error;
+            }
         }
 
-        return array_values(array_filter($errors));
+        return $errors;
     }
 }

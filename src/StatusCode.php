@@ -22,7 +22,7 @@ class StatusCode
     const ACCEPTABLE = 100;
     const SATISFACTORY = 200;
     const UNACCEPTABLE = 300;
-    const UNAVAILABLE = 400;
+    const ERROR = 400;
 
     /**
      * @param int $statusCode

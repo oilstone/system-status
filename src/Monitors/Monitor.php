@@ -98,7 +98,7 @@ abstract class Monitor
         $this->test();
 
         if (isset($this->error)) {
-            return StatusCode::UNAVAILABLE;
+            return StatusCode::ERROR;
         }
 
         if (!isset($this->config['expectations']['response_within'])) {
@@ -111,7 +111,7 @@ abstract class Monitor
             }
         }
 
-        return StatusCode::UNAVAILABLE;
+        return StatusCode::ERROR;
     }
 
     /**
