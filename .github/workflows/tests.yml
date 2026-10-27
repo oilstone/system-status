@@ -1,0 +1,70 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { laravel: 10, testbench: 8, php: '8.1' }
+          - { laravel: 10, testbench: 8, php: '8.2' }
+          - { laravel: 10, testbench: 8, php: '8.3' }
+          - { laravel: 11, testbench: 9, php: '8.2' }
+          - { laravel: 11, testbench: 9, php: '8.3' }
+          - { laravel: 11, testbench: 9, php: '8.4' }
+          - { laravel: 12, testbench: 10, php: '8.2' }
+          - { laravel: 12, testbench: 10, php: '8.3' }
+          - { laravel: 12, testbench: 10, php: '8.4' }
+          - { laravel: 12, testbench: 10, php: '8.5' }
+          - { laravel: 13, testbench: 11, php: '8.3' }
+          - { laravel: 13, testbench: 11, php: '8.4' }
+          - { laravel: 13, testbench: 11, php: '8.5' }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pdo_sqlite
+          coverage: none
+
+      - name: Install dependencies
+        run: |
+          composer require "laravel/framework:^${{ matrix.laravel }}.0" "orchestra/testbench:^${{ matrix.testbench }}.0" --dev --no-update --no-interaction
+          composer update --prefer-dist --no-interaction --no-progress
+
+      - name: Run tests
+        run: vendor/bin/phpunit
+
+  static:
+    name: Style and static analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          coverage: none
+
+      - name: Install dependencies
+        run: composer update --prefer-dist --no-interaction --no-progress
+
+      - name: Check code style
+        run: vendor/bin/pint --test
+
+      - name: Analyse
+        run: vendor/bin/phpstan analyse --no-progress --memory-limit=1G

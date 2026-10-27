@@ -176,18 +176,14 @@ Requesting a category that has no monitors throws `UnknownCategory` rather than 
 
 ## Upgrading from 1.x
 
-2.0 is a rewrite. Breaking changes:
+2.0 is a rewrite. See [UPGRADE.md](UPGRADE.md) for the breaking changes, and [CHANGELOG.md](CHANGELOG.md) for what's new.
 
-- `SystemStatus` is now an instance rather than static methods. In Laravel, use the facade or inject it.
-- `isSystemOkay()` → `passes()`. `scores()` and `errors()` → `check()`, which returns a `Report` (`toArray()`, `failures()`, `rating()`).
-- `StatusCode` is replaced by the `Rating` enum.
-  - The status/score split is gone: a result is rated, and `fail_at` decides what counts as failing.
-- `expectations.response_within` → `thresholds`, now genuinely in milliseconds. 1.x measured whole seconds, so its thresholds effectively never triggered.
-- Monitor types:
-  - `mysql` → `pdo` (any driver), or `database` in Laravel.
-  - `redis` → `cache` with a PSR-16 store, or `store` name in Laravel.
-  - `bearerToken` → `oauth_token`.
-  - `file` takes `path` and `checks` rather than `file_path` and `test_type`.
-- Custom monitors implement `check(Probe $probe)` rather than `executeAction()`, and extend `Monitors\Monitor` with an optional config array.
-- Requesting an unknown category throws instead of passing.
-- Laravel apps no longer need their own monitor controllers, routes or service provider.
+## Development
+
+```bash
+composer install
+composer test       # PHPUnit: tests/Unit and tests/Laravel (Orchestra Testbench)
+composer analyse    # PHPStan
+composer lint       # Pint, in test mode; composer format applies fixes
+composer check      # all three
+```

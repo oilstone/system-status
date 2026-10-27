@@ -1,0 +1,13 @@
+parameters:
+    level: 8
+    paths:
+        - src
+    ignoreErrors:
+        # Monitor options and config arrays are deliberately loose; their shapes are documented per class
+        -
+            identifier: missingType.iterableValue
+        # Queue contracts before Laravel 11 lack these methods, so the checks matter there
+        -
+            identifier: function.alreadyNarrowedType
+            path: src/Integrations/Laravel/Monitors/Queue.php
+            count: 2

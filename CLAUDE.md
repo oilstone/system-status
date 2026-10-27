@@ -4,30 +4,38 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`oilstone/system-status`: a PHP 8.1+ library of health checks ("monitors") for an application's dependencies, with an optional Laravel 10+ integration (ping/status/heartbeat routes, a console command, a facade). README.md is the user-facing reference for config options, monitor types and the 1.x → 2.0 upgrade notes; keep it in sync when changing behaviour or options.
+`oilstone/system-status`: a PHP 8.1+ library of health checks ("monitors") for an application's dependencies, with an optional Laravel 10+ integration (ping/status/heartbeat routes, a console command, a facade). README.md is the user-facing reference for config options and monitor types, UPGRADE.md covers 1.x → 2.0, and CHANGELOG.md records releases; keep them in sync when changing behaviour or options.
 
 ## Commands
 
-There is no test suite, linter or CI config in the repo, and `composer.json` has no dev dependencies. Guzzle and Laravel are only `suggest`ed, so a plain `composer install` cannot load `Concerns/MakesHttpRequests` or anything under `Integrations/Laravel`. To verify changes:
-
 ```bash
 composer install
-find src -name '*.php' -exec php -l {} \;
+composer check                                   # lint + analyse + test, as CI runs them
+composer test                                    # all PHPUnit suites
+vendor/bin/phpunit --testsuite Unit              # framework-agnostic core
+vendor/bin/phpunit --testsuite Laravel           # Orchestra Testbench feature tests
+vendor/bin/phpunit --filter test_thresholds_rate # a single test by name
+composer analyse                                 # PHPStan level 8 (phpstan.neon.dist)
+composer format                                  # Pint with the house style in pint.json
 ```
 
-For runtime checks, require the package into a Laravel app (or install `guzzlehttp/guzzle`/`laravel/framework` locally without committing them) and exercise `php artisan system-status:check`.
+Guzzle, Laravel and Testbench are dev dependencies only; in production they are optional (`suggest`), so code outside `Integrations/Laravel` and `Concerns/MakesHttpRequests` must not depend on them. CI (`.github/workflows/tests.yml`) runs every supported PHP version against Laravel 10–13, plus Pint and PHPStan on the latest. `pint.json` keeps this codebase's style (`! $x`, spaced concatenation, multi-line empty bodies), which differs from Pint's current Laravel preset.
+
+Testing notes:
+- Laravel tests extend `tests/Laravel/TestCase.php`. Config read while the package boots (monitors, routes) is set with `$this->monitors([...])` or `$this->rebootWith([...])`, which refresh the application, so set up spies such as `Log::spy()` after calling them.
+- HTTP monitors are tested without a network by passing a Guzzle `MockHandler` stack as `options.handler`.
 
 ## Architecture
 
 Core (`src/`, framework-agnostic):
 
-- `SystemStatus` stores monitor **definitions** per category and builds them lazily on `check()`. Definitions may be a `Contracts\Monitor` instance, a closure returning one, a class name, or an array with `class` or `type` plus options. `run()` wraps building, checking and rating each monitor in try/catch so any failure (including a monitor that can't be constructed) becomes a `Rating::Failed` `Result` instead of an exception. Only `UnknownCategory` escapes `check()`.
+- `SystemStatus` stores monitor **definitions** per category and builds them lazily on `check()`. Definitions may be a `Contracts\Monitor` instance, a closure returning one, a registered type or class name, or an array with `class` or `type` plus options. `run()` wraps building, checking and rating each monitor in try/catch so any failure (including a monitor that can't be constructed) becomes a `Rating::Failed` `Result` instead of an exception. Only `UnknownCategory` escapes `check()`.
 - `MonitorFactory` maps `type` strings (normalised to snake_case) to classes or closures; `extend()` adds/overrides types. `nameFor()` derives a display name without constructing the monitor (reads the class's default `$name` via reflection) for definitions that fail to build.
 - `Monitors\Monitor` is the base class: constructor takes `array $config`, validates `$required` keys, then calls `configure()`. `rate()` turns duration (ms) into a `Rating` via `thresholds`/`otherwise`.
 - `Probe` is passed to `check()`; monitors throw to fail, and use the probe to worsen the rating, add notes or metadata. Ratings only ever get worse.
 - `Rating` is an int-backed enum where higher = worse, so comparisons are numeric (`isAtLeast`, `worst`). `Rating::parse()` accepts the enum, its int value, or a case-insensitive name, which is how config strings like `'degraded'` are read.
 - Final rating of a result = worst of the probe's rating and the duration-based rating. `Report` aggregates results; pass/fail is always relative to a `fail_at` rating.
-- `Concerns\MakesHttpRequests` is the Guzzle helper used by `Http`, `OAuthToken` and custom API monitors. It strips query strings from URLs in error messages (`describeUrl`) so credentials never leak into reports.
+- `Concerns\MakesHttpRequests` is the Guzzle helper used by `Http`, `OAuthToken` and custom API monitors. It reduces every URL in error messages, including those inside Guzzle's own messages, to host, port and path (`describeUrl`, `redactUrls`) so credentials never leak into reports.
 
 Laravel integration (`src/Integrations/Laravel/`):
 
