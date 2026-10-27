@@ -39,7 +39,7 @@ trait MakesHttpRequests
         try {
             $response = $this->http()->request($method, $url, $options);
         } catch (GuzzleException $e) {
-            $this->fail(sprintf('%s %s failed: %s', $method, $this->describeUrl($url), $e->getMessage()), $e);
+            $this->fail(sprintf('%s %s failed: %s', $method, $this->describeUrl($url), $this->redactUrls($e->getMessage())), $e);
         }
 
         $status = $response->getStatusCode();
@@ -90,10 +90,23 @@ trait MakesHttpRequests
         $parts = parse_url($url);
 
         if (! isset($parts['host'])) {
-            return $url;
+            // Relative to a base_uri option, or unparseable
+            return preg_replace('/[?#].*$/s', '', $url);
         }
 
         return $parts['host'] . (isset($parts['port']) ? ':' . $parts['port'] : '') . ($parts['path'] ?? '');
+    }
+
+    /**
+     * Guzzle ends its messages with the full request URL, which can carry credentials.
+     */
+    protected function redactUrls(string $message): string
+    {
+        return preg_replace_callback(
+            '~\b[a-z][a-z0-9+.-]*://[^\s"\'<>]+~i',
+            fn (array $match) => $this->describeUrl($match[0]),
+            $message,
+        ) ?? $message;
     }
 
     /**

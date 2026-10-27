@@ -21,16 +21,21 @@ class StatusController
         $headers = ['Cache-Control' => 'no-store'];
         $options = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE;
 
-        $failAt = Rating::tryParse($request->query('fail_at'));
+        // Query values can arrive as arrays (?fail_at[]=x), so check their type before using them
+        $failAtQuery = $request->query('fail_at');
+        $categoriesQuery = $request->query('categories');
+        $failAt = is_string($failAtQuery) ? Rating::tryParse($failAtQuery) : null;
 
-        if ($request->filled('fail_at') && $failAt === null) {
+        if (filled($failAtQuery) && $failAt === null) {
             return new JsonResponse(['error' => 'fail_at must be one of optimal, acceptable, degraded or failed'], 422, $headers, $options);
         }
 
+        if (filled($categoriesQuery) && ! is_string($categoriesQuery)) {
+            return new JsonResponse(['error' => 'categories must be a comma separated list of category names'], 422, $headers, $options);
+        }
+
         $failAt ??= Rating::parse($settings['fail_at'] ?? Rating::Failed);
-        $categories = $request->filled('categories')
-            ? explode(',', (string) $request->query('categories'))
-            : $settings['categories'] ?? null;
+        $categories = filled($categoriesQuery) ? explode(',', $categoriesQuery) : $settings['categories'] ?? null;
 
         try {
             $report = $status->check($categories);

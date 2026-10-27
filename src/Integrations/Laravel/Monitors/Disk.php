@@ -15,6 +15,8 @@ use Oilstone\SystemStatus\Probe;
  */
 class Disk extends Monitor
 {
+    protected string $name = 'Disk';
+
     public function __construct(array $config, protected Factory $filesystem)
     {
         parent::__construct($config);

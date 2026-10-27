@@ -15,6 +15,8 @@ use Oilstone\SystemStatus\Probe;
  */
 class Database extends Monitor
 {
+    protected string $name = 'Database';
+
     public function __construct(array $config, protected DatabaseManager $db)
     {
         parent::__construct($config);

@@ -15,6 +15,8 @@ use Oilstone\SystemStatus\Probe;
  */
 class Queue extends Monitor
 {
+    protected string $name = 'Queue';
+
     public function __construct(array $config, protected Factory $queue)
     {
         parent::__construct($config);

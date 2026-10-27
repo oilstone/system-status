@@ -40,6 +40,7 @@ abstract class Monitor implements MonitorContract
             throw InvalidMonitorConfiguration::missing($this->name(), $missing);
         }
 
+        $this->validateThresholds();
         $this->configure();
     }
 
@@ -74,6 +75,37 @@ abstract class Monitor implements MonitorContract
      */
     protected function configure(): void
     {
+    }
+
+    /**
+     * Misconfigured thresholds would otherwise rate every check optimal, hiding slowness.
+     */
+    protected function validateThresholds(): void
+    {
+        $thresholds = $this->config['thresholds'] ?? $this->thresholds;
+
+        if (! is_array($thresholds)) {
+            throw InvalidMonitorConfiguration::invalid($this->name(), 'thresholds must map milliseconds to ratings');
+        }
+
+        foreach ($thresholds as $limit => $rating) {
+            if (! is_int($limit)) {
+                throw InvalidMonitorConfiguration::invalid($this->name(), sprintf('threshold "%s" is not a whole number of milliseconds', $limit));
+            }
+
+            if (! $this->isRating($rating)) {
+                throw InvalidMonitorConfiguration::invalid($this->name(), sprintf('threshold %dms is not mapped to a valid rating', $limit));
+            }
+        }
+
+        if (isset($this->config['otherwise']) && ! $this->isRating($this->config['otherwise'])) {
+            throw InvalidMonitorConfiguration::invalid($this->name(), 'otherwise is not a valid rating');
+        }
+    }
+
+    protected function isRating(mixed $value): bool
+    {
+        return ($value instanceof Rating || is_int($value) || is_string($value)) && Rating::tryParse($value) !== null;
     }
 
     protected function blank(mixed $value): bool

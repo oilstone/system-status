@@ -8,6 +8,7 @@ use DateTimeImmutable;
 use DateTimeInterface;
 use IteratorAggregate;
 use JsonSerializable;
+use stdClass;
 use Traversable;
 
 /**
@@ -81,7 +82,8 @@ final class Report implements Countable, IteratorAggregate, JsonSerializable
             'rating' => $this->rating()->label(),
             'checked_at' => $this->checkedAt->format(DateTimeInterface::ATOM),
             'duration_ms' => round($this->duration(), 1),
-            'categories' => $categories,
+            // An empty array would encode as [] rather than {}, changing the JSON shape
+            'categories' => $categories ?: new stdClass(),
         ];
     }
 
