@@ -35,7 +35,9 @@ class StatusController
         }
 
         $failAt ??= Rating::parse($settings['fail_at'] ?? Rating::Failed);
-        $categories = filled($categoriesQuery) ? explode(',', $categoriesQuery) : $settings['categories'] ?? null;
+        $categories = is_string($categoriesQuery) && filled($categoriesQuery)
+            ? explode(',', $categoriesQuery)
+            : $settings['categories'] ?? null;
 
         try {
             $report = $status->check($categories);

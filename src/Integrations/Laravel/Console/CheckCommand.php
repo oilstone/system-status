@@ -25,7 +25,8 @@ class CheckCommand extends Command
 
     public function handle(SystemStatus $status): int
     {
-        $failAt = Rating::tryParse($this->option('fail-at'));
+        $option = $this->option('fail-at');
+        $failAt = is_string($option) ? Rating::tryParse($option) : null;
 
         if ($failAt === null) {
             $this->components->error('--fail-at must be one of optimal, acceptable, degraded or failed');
@@ -34,7 +35,9 @@ class CheckCommand extends Command
         }
 
         try {
-            $report = $status->check($this->argument('categories') ?: null);
+            $categories = array_values(array_filter((array) $this->argument('categories'), 'is_string'));
+
+            $report = $status->check($categories ?: null);
         } catch (UnknownCategory $e) {
             $this->components->error($e->getMessage());
 

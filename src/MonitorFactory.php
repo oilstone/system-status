@@ -29,8 +29,10 @@ class MonitorFactory
     ];
 
     /**
-     * @param class-string<Monitor>|Closure(array): Monitor $resolver A class constructed with the
-     *        definition's options, or a closure given the options that returns a monitor
+     * Register a type, resolved by a class constructed with the definition's options or by a
+     * closure given the options that returns a monitor.
+     *
+     * @param class-string<Monitor>|Closure(array): Monitor $resolver
      */
     public function extend(string $type, string|Closure $resolver): static
     {

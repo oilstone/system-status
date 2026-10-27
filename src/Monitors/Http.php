@@ -26,7 +26,7 @@ class Http extends Monitor
         $method = strtoupper($this->config['method'] ?? 'GET');
         $url = (string) $this->config['url'];
         $expect = isset($this->config['expect_status'])
-            ? array_map('intval', (array) $this->config['expect_status'])
+            ? array_values(array_map('intval', (array) $this->config['expect_status']))
             : null;
 
         if (empty($this->config['expect_json'])) {

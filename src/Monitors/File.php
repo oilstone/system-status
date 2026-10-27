@@ -30,6 +30,7 @@ class File extends Monitor
                 'exists' => file_exists($path),
                 'readable' => is_readable($path),
                 'writable' => is_writable($path),
+                default => $this->fail(sprintf('Unknown check "%s"', $check)),
             };
 
             if (! $passes) {

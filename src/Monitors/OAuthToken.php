@@ -86,7 +86,9 @@ class OAuthToken extends Monitor
             $options['auth'] = [$this->config['client_id'], (string) ($this->config['client_secret'] ?? '')];
         }
 
-        $token = $this->requestJson('POST', $this->tokenUrl(), $options);
+        $url = $this->tokenUrl() ?? throw InvalidMonitorConfiguration::missing($this->name(), ['token_url']);
+
+        $token = $this->requestJson('POST', $url, $options);
 
         if (! is_string($token['access_token'] ?? null) || $token['access_token'] === '') {
             $this->fail('The token response did not include an access token');

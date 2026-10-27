@@ -95,7 +95,7 @@ trait MakesHttpRequests
 
         if (! isset($parts['host'])) {
             // Relative to a base_uri option, or unparseable
-            return preg_replace('/[?#].*$/s', '', $url);
+            return substr($url, 0, strcspn($url, '?#'));
         }
 
         return $parts['host'] . (isset($parts['port']) ? ':' . $parts['port'] : '') . ($parts['path'] ?? '');

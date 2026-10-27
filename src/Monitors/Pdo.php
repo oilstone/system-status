@@ -38,18 +38,14 @@ class Pdo extends Monitor
 
     protected function connect(): \PDO
     {
-        $pdo = $this->config['pdo'] ?? null;
+        if (isset($this->config['pdo'])) {
+            $pdo = $this->config['pdo'] instanceof Closure ? ($this->config['pdo'])() : $this->config['pdo'];
 
-        if ($pdo instanceof Closure) {
-            $pdo = $pdo();
-        }
+            if (! $pdo instanceof \PDO) {
+                throw InvalidMonitorConfiguration::invalid($this->name(), 'pdo must be a PDO instance or a closure returning one');
+            }
 
-        if ($pdo instanceof \PDO) {
             return $pdo;
-        }
-
-        if ($pdo !== null) {
-            throw InvalidMonitorConfiguration::invalid($this->name(), 'pdo must be a PDO instance or a closure returning one');
         }
 
         return new \PDO(

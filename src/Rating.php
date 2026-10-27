@@ -19,6 +19,10 @@ enum Rating: int
      */
     public static function parse(self|int|string $rating): self
     {
+        if ($rating instanceof self) {
+            return $rating;
+        }
+
         return self::tryParse($rating) ?? throw new ValueError(sprintf('"%s" is not a valid rating', $rating));
     }
 

@@ -4,6 +4,9 @@ namespace Oilstone\SystemStatus\Exceptions;
 
 use InvalidArgumentException;
 
+/**
+ * @phpstan-consistent-constructor
+ */
 class InvalidMonitorConfiguration extends InvalidArgumentException
 {
     /**

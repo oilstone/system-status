@@ -5,6 +5,9 @@ namespace Oilstone\SystemStatus\Exceptions;
 use InvalidArgumentException;
 use Oilstone\SystemStatus\Contracts\Monitor;
 
+/**
+ * @phpstan-consistent-constructor
+ */
 class UnknownMonitorType extends InvalidArgumentException
 {
     public static function forType(string $type): static
