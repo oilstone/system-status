@@ -22,7 +22,7 @@ class SystemStatus
     }
 
     /**
-     * @param Monitor|Closure|class-string<Monitor>|array $monitor See MonitorFactory::make()
+     * @param Monitor|Closure|string|array $monitor See MonitorFactory::make()
      */
     public function add(Monitor|Closure|string|array $monitor, string $category = 'default'): static
     {

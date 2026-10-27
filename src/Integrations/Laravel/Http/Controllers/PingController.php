@@ -2,6 +2,8 @@
 
 namespace Oilstone\SystemStatus\Integrations\Laravel\Http\Controllers;
 
+use Closure;
+use Illuminate\Contracts\Cache\Factory as CacheFactory;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Http\Response;
@@ -21,6 +23,17 @@ class PingController
     public function __invoke(SystemStatus $status): Response
     {
         $settings = $this->config->get('system-status.ping', []);
+
+        $passes = $this->remember($settings, fn () => $this->check($status, $settings));
+
+        return new Response($passes ? 'OK' : 'FAIL', $passes ? 200 : 503, [
+            'Content-Type' => 'text/plain',
+            'Cache-Control' => 'no-store',
+        ]);
+    }
+
+    protected function check(SystemStatus $status, array $settings): bool
+    {
         $report = null;
         $exception = null;
 
@@ -37,10 +50,50 @@ class PingController
             $this->logFailure($report, $exception, $settings);
         }
 
-        return new Response($passes ? 'OK' : 'FAIL', $passes ? 200 : 503, [
-            'Content-Type' => 'text/plain',
-            'Cache-Control' => 'no-store',
-        ]);
+        return $passes;
+    }
+
+    /**
+     * Serve a recent outcome, so neither load balancers nor anonymous requests can make every hit
+     * run the checks. Cached per server, since each server checks its own dependencies. Any cache
+     * error falls back to running the checks.
+     *
+     * @param Closure(): bool $check
+     */
+    protected function remember(array $settings, Closure $check): bool
+    {
+        $seconds = (int) ($settings['cache_seconds'] ?? 0);
+
+        if ($seconds <= 0) {
+            return $check();
+        }
+
+        $key = 'system-status:ping:' . sha1((string) json_encode([
+            gethostname(),
+            $settings['categories'] ?? null,
+            $settings['fail_at'] ?? null,
+        ]));
+
+        try {
+            $store = $this->container->make(CacheFactory::class)->store($settings['cache_store'] ?? null);
+            $cached = $store->get($key);
+        } catch (Throwable) {
+            return $check();
+        }
+
+        if (is_bool($cached)) {
+            return $cached;
+        }
+
+        $passes = $check();
+
+        try {
+            $store->put($key, $passes, $seconds);
+        } catch (Throwable) {
+            // The outcome is still correct; only the next ping will run the checks again
+        }
+
+        return $passes;
     }
 
     protected function logFailure(?Report $report, ?Throwable $exception, array $settings): void

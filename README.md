@@ -42,7 +42,7 @@ Define monitors by category in `config/system-status.php`:
 ],
 ```
 
-Definitions are plain arrays, so the config can be cached. Monitor classes named with `class` are built through the container: their constructor receives the options as `$config` and can type-hint any other dependency.
+Definitions are plain arrays (or a bare type or class name, such as `'database'`), so the config can be cached. Monitor classes are built through the container: their constructor receives the options as `$config` and can type-hint any other dependency.
 
 ### Routes
 
@@ -53,6 +53,8 @@ Registered under the `routes.prefix` (default `monitors`), outside the `web` mid
 | `GET /monitors/heartbeat` | The app boots and serves requests | `OK` 200 |
 | `GET /monitors/ping` | Load balancer health check over `ping.categories` | `OK` 200 or `FAIL` 503 |
 | `GET /monitors/status` | Full JSON report, access controlled | 200 when passing, 503 when failing |
+
+The ping outcome is cached per server for `ping.cache_seconds` (default 10) in `ping.cache_store` (`SYSTEM_STATUS_CACHE_STORE`, default `file`), so frequent or malicious requests can't make every hit query your dependencies. Keep the store local to each server, so a cache outage can't slow the ping down, and set `cache_seconds` to `0` to always check live. Failures are only logged when the checks actually run.
 
 `/status` accepts `?categories=services,connections` and `?fail_at=degraded`, so an external uptime monitor can alert on third-party services or slowness without affecting the load balancer.
 
@@ -82,7 +84,9 @@ Prints a table and exits non-zero when the report fails, which suits post-deploy
 | `database` | `connection`, `query` (default `select 1`) |
 | `cache` | `store`, `key_prefix`, `ttl` |
 | `disk` | `disk`, `directory` |
-| `queue` | `connection`, `queue`, `degrade_at`, `fail_at` (waiting job counts) |
+| `queue` | `connection`, `queue`, `degrade_waiting`, `max_waiting` (waiting job counts), `degrade_age`, `max_age` (seconds the oldest waiting job has waited) |
+
+The queue monitor counts only jobs waiting to be picked up, not delayed or reserved ones, where the driver can tell them apart. Job age limits need a driver that reports its oldest pending job.
 
 Database connect timeouts come from the connection's PDO options, e.g. `PDO::ATTR_TIMEOUT` in `config/database.php`.
 
@@ -94,8 +98,8 @@ Database connect timeouts come from the connection's PDO options, e.g. `PDO::ATT
 | `http` | `url`, `method`, `expect_status`, `expect_json` (dot paths to exact values) |
 | `pdo` | `pdo` (instance or closure) or `dsn`, `username`, `password`, `options`; `query`, `timeout` |
 | `cache` | `store` (PSR-16 cache or closure), `key_prefix`, `ttl` |
-| `oauth_token` | `token_url`, `grant_type`, `client_id`, `client_secret`, `username`, `password`, `refresh_token`, `scope`, `token_parameters`, `verify_url` |
-| `callback` | `callback`: callable or invokable class, given `(Probe $probe, array $config)`; fails if it throws or returns `false` |
+| `oauth_token` | `token_url`, `grant_type` (`client_credentials`, `password` or `refresh_token`), `client_id`, `client_secret` (optional for public clients outside `client_credentials`), `client_auth` (`post` or `basic`), `username`, `password`, `refresh_token`, `scope`, `token_parameters`, `verify_url` |
+| `callback` | `callback`: callable or invokable class (built through the container in Laravel), given `(Probe $probe, array $config)`; fails if it throws or returns `false` |
 
 Every type also accepts:
 

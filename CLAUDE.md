@@ -33,8 +33,8 @@ Laravel integration (`src/Integrations/Laravel/`):
 
 - `SystemStatusServiceProvider` registers `SystemStatus` as a singleton built with `ContainerMonitorFactory`, adds the Laravel-specific types (`database`, `cache`, `disk`, `queue`) and loads `system-status.monitors` from config. Note the Laravel `cache` type (`CacheStore`) replaces the core PSR-16 `cache` type.
 - `ContainerMonitorFactory` builds monitor classes through the container, passing options as the named `config` parameter. Monitors that need injected dependencies must therefore keep the first constructor parameter named `$config` (see `Monitors/Database.php`).
-- Routes are registered outside the `web` group (no sessions) and skipped when routes are cached. `PingController` must always return plain `OK`/`FAIL` and never throw, including from its logging. `StatusController` returns JSON, 422 for bad `categories`/`fail_at`, and is guarded by `AuthorizeStatusRequest` (public environment, token, or IP/CIDR allow-list).
-- Config must stay cacheable: definitions in `config/system-status.php` are plain arrays, never closures or objects.
+- Routes are registered outside the `web` group (no sessions) and skipped when routes are cached. `PingController` must always return plain `OK`/`FAIL` and never throw, including from its logging or its result cache (cached per server via a hostname in the key; any cache error falls back to checking live). `StatusController` returns JSON, 422 for bad `categories`/`fail_at`, and is guarded by `AuthorizeStatusRequest` (public environment, token, or IP/CIDR allow-list).
+- Config must stay cacheable: definitions in `config/system-status.php` are plain arrays or type/class name strings, never closures or objects.
 
 ## Conventions
 

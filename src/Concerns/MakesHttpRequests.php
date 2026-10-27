@@ -23,6 +23,10 @@ trait MakesHttpRequests
 
     protected function http(): ClientInterface
     {
+        if ($this->httpClient === null && ! class_exists(Client::class)) {
+            $this->fail('HTTP checks need guzzlehttp/guzzle; run composer require guzzlehttp/guzzle');
+        }
+
         return $this->httpClient ??= new Client(array_replace([
             'timeout' => $this->config['timeout'] ?? 5,
             'connect_timeout' => $this->config['connect_timeout'] ?? 3,

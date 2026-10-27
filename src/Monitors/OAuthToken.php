@@ -13,7 +13,9 @@ use Oilstone\SystemStatus\Probe;
  * Options:
  * - token_url
  * - grant_type: client_credentials (default), password or refresh_token
- * - client_id, client_secret
+ * - client_id
+ * - client_secret: required for client_credentials; optional for public clients using other grants
+ * - client_auth: post (default) sends the client credentials in the form body, basic as HTTP Basic auth
  * - username, password: for the password grant
  * - refresh_token: for the refresh_token grant
  * - scope
@@ -31,9 +33,11 @@ class OAuthToken extends Monitor
         'refresh_token' => ['refresh_token'],
     ];
 
+    protected const CLIENT_AUTH = ['post', 'basic'];
+
     protected string $name = 'OAuth token';
 
-    protected array $required = ['client_id', 'client_secret'];
+    protected array $required = ['client_id'];
 
     public function check(Probe $probe): void
     {
@@ -55,10 +59,19 @@ class OAuthToken extends Monitor
         $requirements = static::GRANT_REQUIREMENTS[$this->grantType()]
             ?? throw InvalidMonitorConfiguration::invalid($this->name(), sprintf('unsupported grant type "%s"', $this->grantType()));
 
+        // Public clients have no secret, but they cannot use the client_credentials grant
+        if ($this->grantType() === 'client_credentials') {
+            $requirements[] = 'client_secret';
+        }
+
         $missing = array_values(array_filter($requirements, fn (string $key) => $this->blank($this->config[$key] ?? null)));
 
         if ($missing) {
             throw InvalidMonitorConfiguration::missing($this->name(), $missing);
+        }
+
+        if (! in_array($this->clientAuth(), static::CLIENT_AUTH, true)) {
+            throw InvalidMonitorConfiguration::invalid($this->name(), sprintf('client_auth must be one of %s', implode(', ', static::CLIENT_AUTH)));
         }
     }
 
@@ -67,7 +80,13 @@ class OAuthToken extends Monitor
      */
     protected function fetchToken(): array
     {
-        $token = $this->requestJson('POST', $this->tokenUrl(), ['form_params' => $this->tokenParameters()]);
+        $options = ['form_params' => $this->tokenParameters()];
+
+        if ($this->clientAuth() === 'basic') {
+            $options['auth'] = [$this->config['client_id'], (string) ($this->config['client_secret'] ?? '')];
+        }
+
+        $token = $this->requestJson('POST', $this->tokenUrl(), $options);
 
         if (! is_string($token['access_token'] ?? null) || $token['access_token'] === '') {
             $this->fail('The token response did not include an access token');
@@ -86,13 +105,22 @@ class OAuthToken extends Monitor
         return $this->config['grant_type'] ?? 'client_credentials';
     }
 
+    protected function clientAuth(): string
+    {
+        return strtolower($this->config['client_auth'] ?? 'post');
+    }
+
     protected function tokenParameters(): array
     {
-        $parameters = [
-            'grant_type' => $this->grantType(),
-            'client_id' => $this->config['client_id'],
-            'client_secret' => $this->config['client_secret'],
-        ];
+        $parameters = ['grant_type' => $this->grantType()];
+
+        if ($this->clientAuth() === 'post') {
+            $parameters['client_id'] = $this->config['client_id'];
+
+            if (! $this->blank($this->config['client_secret'] ?? null)) {
+                $parameters['client_secret'] = $this->config['client_secret'];
+            }
+        }
 
         foreach (static::GRANT_REQUIREMENTS[$this->grantType()] as $key) {
             $parameters[$key] = $this->config[$key];

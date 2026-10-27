@@ -7,8 +7,8 @@ return [
     | Monitors
     |--------------------------------------------------------------------------
     |
-    | Monitor definitions grouped by category. Each definition is a monitor
-    | class name, or an array of options with either a "class" or a "type".
+    | Monitor definitions grouped by category. Each definition is a type or
+    | monitor class name, or an array of options with a "class" or "type".
     |
     | Built-in types: database, cache, disk, queue, file, http, pdo,
     | oauth_token and callback. Register more with SystemStatus::extend().
@@ -40,11 +40,18 @@ return [
     | fail_at is the rating at which a monitor counts as failing: optimal,
     | acceptable, degraded or failed.
     |
+    | The outcome is cached for cache_seconds, per server, so frequent or
+    | malicious requests cannot make every hit query your dependencies.
+    | Use a store local to each server (the default "file") so a cache
+    | outage cannot slow the ping down; set 0 to always check live.
+    |
     */
 
     'ping' => [
         'categories' => null,
         'fail_at' => 'failed',
+        'cache_seconds' => 10,
+        'cache_store' => env('SYSTEM_STATUS_CACHE_STORE', 'file'),
         'log_failures' => true,
         'log_channel' => env('SYSTEM_STATUS_LOG_CHANNEL'),
     ],

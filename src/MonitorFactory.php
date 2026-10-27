@@ -45,8 +45,8 @@ class MonitorFactory
     }
 
     /**
-     * Definitions can be a monitor, a closure returning one, a monitor class name, or an
-     * array of options with a "class" or "type" key.
+     * Definitions can be a monitor, a closure returning one, a registered type or monitor class
+     * name, or an array of options with a "class" or "type" key.
      */
     public function make(mixed $definition): Monitor
     {
@@ -59,7 +59,7 @@ class MonitorFactory
         }
 
         if (is_string($definition)) {
-            return $this->instantiate($definition, []);
+            return $this->hasType($definition) ? $this->resolveType($definition, []) : $this->instantiate($definition, []);
         }
 
         if (is_array($definition) && isset($definition['class'])) {
@@ -87,14 +87,15 @@ class MonitorFactory
         }
 
         $class = match (true) {
-            is_string($definition) => $definition,
+            is_string($definition) => $this->hasType($definition) ? $this->classForType($definition) : $definition,
             is_array($definition) && isset($definition['class']) => (string) $definition['class'],
             is_array($definition) && isset($definition['type']) => $this->classForType((string) $definition['type']),
             default => null,
         };
 
         return $this->defaultNameOf($class)
-            ?? (is_array($definition) ? ($definition['class'] ?? $definition['type'] ?? null) : $class)
+            ?? (is_array($definition) ? ($definition['class'] ?? $definition['type'] ?? null) : null)
+            ?? (is_string($definition) ? $definition : null)
             ?? 'Unnamed monitor';
     }
 

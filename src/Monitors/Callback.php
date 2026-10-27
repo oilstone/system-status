@@ -4,17 +4,24 @@ namespace Oilstone\SystemStatus\Monitors;
 
 use Oilstone\SystemStatus\Exceptions\InvalidMonitorConfiguration;
 use Oilstone\SystemStatus\Probe;
+use Psr\Container\ContainerInterface;
 
 /**
  * Options:
  * - callback: callable or invokable class name, called with (Probe $probe, array $config).
- *   Fails if it throws or returns false.
+ *   Fails if it throws or returns false. Class names are resolved through the container when
+ *   one is given, as it is in Laravel, so they can inject dependencies.
  */
 class Callback extends Monitor
 {
     protected string $name = 'Callback';
 
     protected array $required = ['callback'];
+
+    public function __construct(array $config = [], protected ?ContainerInterface $container = null)
+    {
+        parent::__construct($config);
+    }
 
     public function check(Probe $probe): void
     {
@@ -28,7 +35,7 @@ class Callback extends Monitor
         $callback = $this->config['callback'];
 
         if (is_string($callback) && ! is_callable($callback) && class_exists($callback)) {
-            $callback = new $callback();
+            $callback = $this->container?->get($callback) ?? new $callback();
         }
 
         if (! is_callable($callback)) {
