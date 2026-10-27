@@ -1,59 +1,66 @@
 <?php
 
-/**
- * @noinspection PhpUndefinedClassInspection
- * @noinspection PhpUndefinedNamespaceInspection
- * @noinspection PhpUndefinedMethodInspection
- */
-
 namespace Oilstone\SystemStatus\Monitors;
 
-use GuzzleHttp\Client;
-use GuzzleHttp\Exception\GuzzleException;
-use Oilstone\SystemStatus\Contracts\Monitor as MonitorContract;
-use Oilstone\SystemStatus\Exceptions\InvalidMonitorConfiguration;
-use Oilstone\SystemStatus\Exceptions\MonitorFailedException;
+use Oilstone\SystemStatus\Concerns\MakesHttpRequests;
+use Oilstone\SystemStatus\Probe;
 
 /**
- * Class Http
- * @package Oilstone\SystemStatus\Monitors
+ * Options:
+ * - url
+ * - method (default GET)
+ * - expect_status: accepted status code(s); any 2xx when omitted
+ * - expect_json: dot-notation paths mapped to the exact values the JSON response must contain
+ * - timeout, connect_timeout, options: see MakesHttpRequests
  */
-class Http extends Monitor implements MonitorContract
+class Http extends Monitor
 {
-    /**
-     * @var string
-     */
-    protected string $alias = 'HTTP monitor';
+    use MakesHttpRequests;
 
-    /**
-     * Http constructor.
-     * @param array $config
-     * @throws InvalidMonitorConfiguration
-     */
-    public function __construct(array $config)
+    protected string $name = 'HTTP';
+
+    protected array $required = ['url'];
+
+    public function check(Probe $probe): void
     {
-        parent::__construct($config);
+        $method = strtoupper($this->config['method'] ?? 'GET');
+        $url = (string) $this->config['url'];
+        $expect = isset($this->config['expect_status'])
+            ? array_map('intval', (array) $this->config['expect_status'])
+            : null;
 
-        if (!($config['url'] ?? false)) {
-            throw new InvalidMonitorConfiguration('Missing URL value for ' . $this->alias, $config);
+        if (empty($this->config['expect_json'])) {
+            $this->request($method, $url, [], $expect);
+
+            return;
+        }
+
+        $data = $this->requestJson($method, $url, [], $expect);
+
+        foreach ($this->config['expect_json'] as $path => $expected) {
+            $actual = $this->dataGet($data, (string) $path);
+
+            if ($actual !== $expected) {
+                $this->fail(sprintf(
+                    'Expected %s to be %s but got %s',
+                    $path,
+                    json_encode($expected),
+                    json_encode($actual),
+                ));
+            }
         }
     }
 
-    /**
-     * @throws MonitorFailedException
-     */
-    protected function executeAction(): void
+    protected function dataGet(array $data, string $path): mixed
     {
-        $client = new Client($this->config['options'] ?? []);
+        foreach (explode('.', $path) as $segment) {
+            if (! is_array($data) || ! array_key_exists($segment, $data)) {
+                return null;
+            }
 
-        try {
-            $response = $client->request($this->config['request_type'] ?? 'GET', $this->config['url'], $this->config['options'] ?? []);
-        } catch (GuzzleException $e) {
-            throw new MonitorFailedException($this->alias . ' encountered an error (' . $e->getMessage() . ')', $e);
+            $data = $data[$segment];
         }
 
-        if ($response->getStatusCode() !== 200) {
-            throw new MonitorFailedException($this->alias . ' encountered an error (Invalid response status: ' . $response->getStatusCode() . ')');
-        }
+        return $data;
     }
 }

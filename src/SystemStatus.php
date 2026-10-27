@@ -2,135 +2,163 @@
 
 namespace Oilstone\SystemStatus;
 
-use Oilstone\SystemStatus\Exceptions\UnknownMonitorClassException;
-use Oilstone\SystemStatus\Factories\Monitor;
+use Closure;
+use Oilstone\SystemStatus\Contracts\Monitor;
+use Oilstone\SystemStatus\Exceptions\UnknownCategory;
+use Throwable;
 
-/**
- * Class SystemStatus
- * @package Oilstone\SystemStatus
- */
 class SystemStatus
 {
     /**
-     * @var array
+     * Definitions are stored as given and only built into monitors when a check runs,
+     * so registering monitors costs nothing on requests that never check them.
+     *
+     * @var array<string, list<mixed>>
      */
-    protected static array $monitors = [];
+    protected array $monitors = [];
 
-    /**
-     * @param mixed $monitor
-     * @param string $category
-     */
-    public static function addMonitor($monitor, string $category = 'default'): void
+    public function __construct(protected MonitorFactory $factory = new MonitorFactory())
     {
-        static::$monitors[$category][] = $monitor;
     }
 
     /**
-     * @param array $monitors
-     * @param bool $replace
+     * @param Monitor|Closure|class-string<Monitor>|array $monitor See MonitorFactory::make()
      */
-    public static function addMonitors(array $monitors, bool $replace = false): void
+    public function add(Monitor|Closure|string|array $monitor, string $category = 'default'): static
     {
-        static::$monitors = $replace ? $monitors : array_merge(static::$monitors, $monitors);
+        $this->monitors[$category][] = $monitor;
+
+        return $this;
     }
 
     /**
-     * @param string[]|string|null $categories
-     * @return bool
-     * @throws UnknownMonitorClassException
+     * @param array<string, list<mixed>> $monitors Definitions keyed by category
      */
-    public static function isSystemOkay($categories = null): bool
+    public function addMany(array $monitors): static
     {
-        foreach (static::fetchMonitors($categories) as $next) {
-            if ($next['monitor']->status() !== StatusCode::SYSTEM_OKAY) {
-                return false;
+        foreach ($monitors as $category => $definitions) {
+            foreach ($definitions as $definition) {
+                $this->add($definition, (string) $category);
             }
         }
 
-        return true;
+        return $this;
     }
 
     /**
-     * @param null $categories
-     * @return array
-     * @throws UnknownMonitorClassException
+     * @param class-string<Monitor>|Closure(array): Monitor $resolver
      */
-    protected static function fetchMonitors($categories = null): array
+    public function extend(string $type, string|Closure $resolver): static
     {
-        $monitors = [];
+        $this->factory->extend($type, $resolver);
 
-        if ($categories === null) {
-            $categories = array_keys(static::$monitors);
-        }
-
-        foreach ((array)$categories as $category) {
-            foreach (static::$monitors[$category] ?? [] as $index => $monitor) {
-                $monitors[] = [
-                    'category' => $category,
-                    'monitor' => static::$monitors[$category][$index] = Monitor::make($monitor),
-                ];
-            }
-        }
-
-        return $monitors;
+        return $this;
     }
 
     /**
-     * @param null $categories
-     * @return int
-     * @throws UnknownMonitorClassException
+     * @return list<string>
      */
-    public static function averageScore($categories = null): int
+    public function categories(): array
     {
-        $scores = [];
+        return array_keys($this->monitors);
+    }
 
-        foreach (static::fetchMonitors($categories) as $next) {
-            $scores[] = $next['monitor']->score();
-        }
+    public function has(string $category): bool
+    {
+        return isset($this->monitors[$category]);
+    }
 
-        return round(ceil(($scores ? array_sum($scores) / count($scores) : 0) / 100) * 100);
+    public function factory(): MonitorFactory
+    {
+        return $this->factory;
     }
 
     /**
-     * @param null $categories
-     * @return array
-     * @throws UnknownMonitorClassException
+     * @param list<string>|string|null $categories All categories when null
+     * @param Rating|null $stopAt Skip the remaining monitors once one is rated this badly
+     *
+     * @throws UnknownCategory
      */
-    public static function scores($categories = null): array
+    public function check(array|string|null $categories = null, ?Rating $stopAt = null): Report
     {
-        $scores = [];
+        $results = [];
 
-        foreach (static::fetchMonitors($categories) as $next) {
-            $scores[$next['category']][$next['monitor']->alias()] = [
-                'score' => $next['monitor']->score(),
-                'rating' => StatusCode::toString($next['monitor']->score()),
-            ];
-        }
+        foreach ($this->resolveCategories($categories) as $category) {
+            foreach ($this->monitors[$category] as $definition) {
+                $results[] = $result = $this->run($definition, $category);
 
-        return $scores;
-    }
-
-    /**
-     * @param null $categories
-     * @return array
-     * @throws UnknownMonitorClassException
-     */
-    public static function errors($categories = null): array
-    {
-        $errors = [];
-
-        foreach (static::fetchMonitors($categories) as $next) {
-            if ($next['monitor']->error()) {
-                $error = $next['monitor']->error()->getMessage();
-
-                if (!$error) {
-                    $error = (string)$next['monitor']->error();
+                if ($stopAt !== null && $result->rating->isAtLeast($stopAt)) {
+                    return new Report($results);
                 }
-
-                $errors[$next['category']][$next['monitor']->alias()] = $error;
             }
         }
 
-        return $errors;
+        return new Report($results);
+    }
+
+    /**
+     * @param list<string>|string|null $categories All categories when null
+     *
+     * @throws UnknownCategory
+     */
+    public function passes(array|string|null $categories = null, Rating $failAt = Rating::Failed): bool
+    {
+        return $this->check($categories, $failAt)->passes($failAt);
+    }
+
+    protected function run(mixed $definition, string $category): Result
+    {
+        try {
+            $monitor = $this->factory->make($definition);
+        } catch (Throwable $e) {
+            return new Result($category, $this->factory->nameFor($definition), Rating::Failed, 0.0, $e);
+        }
+
+        $probe = new Probe();
+        $error = null;
+        $started = hrtime(true);
+
+        try {
+            $monitor->check($probe);
+        } catch (Throwable $e) {
+            $error = $e;
+        }
+
+        $duration = (hrtime(true) - $started) / 1e6;
+
+        try {
+            $rating = $error === null ? Rating::worst($probe->rating(), $monitor->rate($duration)) : Rating::Failed;
+        } catch (Throwable $e) {
+            [$rating, $error] = [Rating::Failed, $e];
+        }
+
+        return new Result($category, $monitor->name(), $rating, $duration, $error, $probe->notes(), $probe->metadata());
+    }
+
+    /**
+     * @return list<string>
+     */
+    protected function resolveCategories(array|string|null $categories): array
+    {
+        if ($categories === null) {
+            return $this->categories();
+        }
+
+        $categories = array_values(array_unique(array_filter(
+            array_map(fn (mixed $category) => trim((string) $category), (array) $categories),
+            fn (string $category) => $category !== '',
+        )));
+
+        if ($categories === []) {
+            throw UnknownCategory::none();
+        }
+
+        $unknown = array_values(array_diff($categories, $this->categories()));
+
+        if ($unknown) {
+            throw UnknownCategory::make($unknown);
+        }
+
+        return $categories;
     }
 }

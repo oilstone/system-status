@@ -2,151 +2,87 @@
 
 namespace Oilstone\SystemStatus\Monitors;
 
-use Oilstone\SystemStatus\Exceptions\MonitorFailedException;
-use Oilstone\SystemStatus\StatusCode;
+use Oilstone\SystemStatus\Contracts\Monitor as MonitorContract;
+use Oilstone\SystemStatus\Exceptions\InvalidMonitorConfiguration;
+use Oilstone\SystemStatus\Exceptions\MonitorFailed;
+use Oilstone\SystemStatus\Probe;
+use Oilstone\SystemStatus\Rating;
 use Throwable;
 
-/**
- * Class Monitor
- * @package Oilstone\SystemStatus\Monitors
- */
-abstract class Monitor
+abstract class Monitor implements MonitorContract
 {
-    /**
-     * @var array
-     */
-    protected array $config;
+    protected string $name = 'Monitor';
 
     /**
-     * @var string
+     * Config keys that must be present and non-empty.
+     *
+     * @var list<string>
      */
-    protected string $alias = 'Monitor';
+    protected array $required = [];
 
     /**
-     * @var Throwable
+     * Upper response time limits in milliseconds, each mapped to the rating given for finishing
+     * under it. A check slower than every limit is rated by the "otherwise" option (default:
+     * degraded). Overridden by the "thresholds" option.
+     *
+     * @var array<int, Rating|int|string>
      */
-    protected Throwable $error;
+    protected array $thresholds = [];
 
-    /**
-     * @var int
-     */
-    protected int $time;
-
-    /**
-     * Http constructor.
-     * @param array $config
-     */
-    public function __construct(array $config)
+    public function __construct(protected array $config = [])
     {
-        if (isset($config['alias'])) {
-            $this->alias = $config['alias'];
+        $missing = array_values(array_filter(
+            $this->required,
+            fn (string $key) => $this->blank($this->config[$key] ?? null),
+        ));
+
+        if ($missing) {
+            throw InvalidMonitorConfiguration::missing($this->name(), $missing);
         }
 
-        $this->config = $config;
+        $this->configure();
     }
 
-    /**
-     * @return int
-     */
-    public function status(): int
+    abstract public function check(Probe $probe): void;
+
+    public function name(): string
     {
-        $this->test();
-
-        if (isset($this->error)) {
-            return StatusCode::SYSTEM_OFFLINE;
-        }
-
-        return StatusCode::SYSTEM_OKAY;
+        return (string) ($this->config['name'] ?? $this->name);
     }
 
-    /**
-     * @return int
-     */
-    protected function test(): int
+    public function rate(float $duration): Rating
     {
-        if (isset($this->time)) {
-            return $this->time;
+        $thresholds = $this->config['thresholds'] ?? $this->thresholds;
+
+        if (! $thresholds) {
+            return Rating::Optimal;
         }
 
-        $started = microtime(true);
+        ksort($thresholds);
 
-        try {
-            $this->executeAction();
-        } catch (Throwable $t) {
-            if (!$t instanceof MonitorFailedException) {
-                $t = new MonitorFailedException($this->alias . ' encountered an error (' . $t->getMessage() . ')', $t);
-            }
-
-            $this->error = $t;
-        }
-
-        $this->time = microtime(true) - $started;
-
-        return $this->time;
-    }
-
-    /**
-     * @return void
-     */
-    abstract protected function executeAction(): void;
-
-    /**
-     * @return int
-     */
-    public function score(): int
-    {
-        $this->test();
-
-        if (isset($this->error)) {
-            return StatusCode::ERROR;
-        }
-
-        if (!isset($this->config['expectations']['response_within'])) {
-            return StatusCode::ACCEPTABLE;
-        }
-
-        foreach ($this->config['expectations']['response_within'] as $threshold => $score) {
-            if ($this->time < $threshold) {
-                return $score;
+        foreach ($thresholds as $limit => $rating) {
+            if ($duration < $limit) {
+                return Rating::parse($rating);
             }
         }
 
-        return StatusCode::ERROR;
+        return Rating::parse($this->config['otherwise'] ?? Rating::Degraded);
     }
 
     /**
-     * @return Throwable|null
+     * Validate configuration beyond the required keys. Throw InvalidMonitorConfiguration on failure.
      */
-    public function error(): ?Throwable
+    protected function configure(): void
     {
-        $this->test();
-
-        if (!isset($this->error)) {
-            return null;
-        }
-
-        return $this->error;
     }
 
-    /**
-     * @return int|null
-     */
-    public function time(): ?int
+    protected function blank(mixed $value): bool
     {
-        $this->test();
-
-        if (!isset($this->time)) {
-            return null;
-        }
-
-        return $this->time;
+        return $value === null || $value === '' || $value === [];
     }
 
-    /**
-     * @return string
-     */
-    public function alias(): string
+    protected function fail(string $message, ?Throwable $previous = null): never
     {
-        return $this->alias;
+        throw new MonitorFailed($message, $previous);
     }
 }

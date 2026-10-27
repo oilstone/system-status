@@ -2,36 +2,20 @@
 
 namespace Oilstone\SystemStatus\Contracts;
 
-use Throwable;
+use Oilstone\SystemStatus\Probe;
+use Oilstone\SystemStatus\Rating;
 
-/**
- * Interface Monitor
- * @package Oilstone\SystemStatus\Contracts
- */
 interface Monitor
 {
-    /**
-     * @return int
-     */
-    public function status(): int;
+    public function name(): string;
 
     /**
-     * @return int
+     * Throw to fail the check. Use the probe to degrade the rating or attach detail without failing.
      */
-    public function score(): int;
+    public function check(Probe $probe): void;
 
     /**
-     * @return Throwable|null
+     * Rate a successful check by how long it took, in milliseconds.
      */
-    public function error(): ?Throwable;
-
-    /**
-     * @return int|null
-     */
-    public function time(): ?int;
-
-    /**
-     * @return string
-     */
-    public function alias(): string;
+    public function rate(float $duration): Rating;
 }

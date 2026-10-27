@@ -2,70 +2,77 @@
 
 namespace Oilstone\SystemStatus\Monitors;
 
-use Oilstone\SystemStatus\Contracts\Monitor as MonitorContract;
 use Oilstone\SystemStatus\Exceptions\InvalidMonitorConfiguration;
-use Oilstone\SystemStatus\Exceptions\MonitorFailedException;
+use Oilstone\SystemStatus\Probe;
 
 /**
- * Class File
- * @package Oilstone\SystemStatus\Monitors
+ * Options:
+ * - path: file or directory to check
+ * - checks: any of "exists", "readable", "writable" (default ["exists"])
+ * - max_age: fail if the file was last modified longer ago than this many seconds
  */
-class File extends Monitor implements MonitorContract
+class File extends Monitor
 {
-    /**
-     * @var string
-     */
-    protected string $alias = 'File monitor';
+    protected const CHECKS = ['exists', 'readable', 'writable'];
 
-    /**
-     * File constructor.
-     * @param array $config
-     * @throws InvalidMonitorConfiguration
-     */
-    public function __construct(array $config)
+    protected string $name = 'File';
+
+    protected array $required = ['path'];
+
+    public function check(Probe $probe): void
     {
-        parent::__construct($config);
+        $path = (string) $this->config['path'];
 
-        if (!($config['test_type'] ?? false) || !($config['file_path'] ?? false)) {
-            throw new InvalidMonitorConfiguration('Missing required configuration for ' . $this->alias, $config);
+        clearstatcache(true, $path);
+
+        foreach ($this->checks() as $check) {
+            $passes = match ($check) {
+                'exists' => file_exists($path),
+                'readable' => is_readable($path),
+                'writable' => is_writable($path),
+            };
+
+            if (! $passes) {
+                $this->fail(sprintf('%s is not %s', $path, $check === 'exists' ? 'present' : $check));
+            }
+        }
+
+        if (isset($this->config['max_age'])) {
+            $this->checkAge($path, (int) $this->config['max_age'], $probe);
+        }
+    }
+
+    protected function configure(): void
+    {
+        $unknown = array_diff($this->checks(), static::CHECKS);
+
+        if ($unknown) {
+            throw InvalidMonitorConfiguration::invalid($this->name(), 'unknown checks ' . implode(', ', $unknown));
+        }
+    }
+
+    protected function checkAge(string $path, int $maxAge, Probe $probe): void
+    {
+        $modified = @filemtime($path);
+
+        if ($modified === false) {
+            $this->fail(sprintf('Unable to read the modified time of %s', $path));
+        }
+
+        $age = time() - $modified;
+
+        $probe->meta('age_seconds', $age);
+
+        if ($age > $maxAge) {
+            $this->fail(sprintf('%s was last modified %ds ago (limit %ds)', $path, $age, $maxAge));
         }
     }
 
     /**
-     * @return void
+     * @return list<string>
      */
-    protected function executeAction(): void
+    protected function checks(): array
     {
-        $this->{$this->config['test_type']}();
-    }
-
-    /**
-     * @throws MonitorFailedException
-     */
-    protected function exists(): void
-    {
-        if (!file_exists($this->config['file_path'])) {
-            throw new MonitorFailedException($this->alias . ' was unable to find the specified file (' . $this->config['file_path'] . ')');
-        }
-    }
-
-    /**
-     * @throws MonitorFailedException
-     */
-    protected function write(): void
-    {
-        if (!is_writable($this->config['file_path'])) {
-            throw new MonitorFailedException($this->alias . ' was unable to write to the specified file (' . $this->config['file_path'] . ')');
-        }
-    }
-
-    /**
-     * @throws MonitorFailedException
-     */
-    protected function read(): void
-    {
-        if (!is_readable($this->config['file_path'])) {
-            throw new MonitorFailedException($this->alias . ' was unable to read the specified file (' . $this->config['file_path'] . ')');
-        }
+        return array_values((array) ($this->config['checks'] ?? ['exists']));
     }
 }

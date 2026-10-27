@@ -2,28 +2,20 @@
 
 namespace Oilstone\SystemStatus\Exceptions;
 
-use Exception;
+use InvalidArgumentException;
 
-/**
- * Class InvalidMonitorConfiguration
- * @package Oilstone\SystemStatus\Exceptions
- */
-class InvalidMonitorConfiguration extends Exception
+class InvalidMonitorConfiguration extends InvalidArgumentException
 {
     /**
-     * @var array
+     * @param list<string> $keys
      */
-    protected array $config;
-
-    /**
-     * InvalidMonitorConfiguration constructor.
-     * @param $message
-     * @param array $config
-     */
-    public function __construct(string $message, array $config)
+    public static function missing(string $monitor, array $keys): static
     {
-        $this->config = $config;
+        return new static(sprintf('%s is missing required configuration: %s', $monitor, implode(', ', $keys)));
+    }
 
-        parent::__construct($message);
+    public static function invalid(string $monitor, string $reason): static
+    {
+        return new static(sprintf('%s is misconfigured: %s', $monitor, $reason));
     }
 }
