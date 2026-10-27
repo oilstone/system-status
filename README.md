@@ -53,6 +53,7 @@ Registered under the `routes.prefix` (default `monitors`), outside the `web` mid
 | `GET /monitors/heartbeat` | The app boots and serves requests | `OK` 200 |
 | `GET /monitors/ping` | Load balancer health check over `ping.categories` | `OK` 200 or `FAIL` 503 |
 | `GET /monitors/status` | Full JSON report, access controlled | 200 when passing, 503 when failing |
+| `GET /monitors/dashboard` | The same report as a page for people, access controlled | HTML, 200 |
 
 The ping outcome is cached per server for `ping.cache_seconds` (default 10) in `ping.cache_store` (`SYSTEM_STATUS_CACHE_STORE`, default `file`), so frequent or malicious requests can't make every hit query your dependencies. Keep the store local to each server, so a cache outage can't slow the ping down, and set `cache_seconds` to `0` to always check live. Failures are only logged when the checks actually run.
 
@@ -67,6 +68,18 @@ Access to `/status` is granted when any of these apply:
 Set `status.expose_errors` to `false` to replace error messages with "Check failed".
 
 Failed pings are logged as warnings with the failing monitors and their errors, through Laravel's logger (or `ping.log_channel`).
+
+### Dashboard
+
+`/monitors/dashboard` shows the status report as a page to open in a browser: an overall headline, then each category's monitors with their ratings, timings, notes, metadata and errors. It follows the system's light or dark theme and refreshes itself in place every `dashboard.refresh_seconds` (default 30, `0` to stop), skipping refreshes while the tab is hidden and saying so if a refresh fails.
+
+It uses the same access rules as `/status`, so open it with `?token=` or from an allowed IP. It also honours the same `categories`, `fail_at` and `expose_errors` settings and query parameters, e.g. `/monitors/dashboard?token=…&categories=services`. Pages are sent with `Referrer-Policy: no-referrer` and `noindex`, so a token in the URL isn't leaked to other sites or search engines.
+
+Set `dashboard.title` to change the heading (default "{app name} status"), add middleware with `routes.dashboard_middleware` (`routes.status_middleware` applies too), or set `dashboard.enabled` to `false` to remove the route. To change the page itself, publish the view:
+
+```bash
+php artisan vendor:publish --tag=system-status-views
+```
 
 ### Console
 

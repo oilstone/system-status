@@ -7,6 +7,7 @@ use Illuminate\Contracts\Foundation\CachesRoutes;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Oilstone\SystemStatus\Integrations\Laravel\Console\CheckCommand;
+use Oilstone\SystemStatus\Integrations\Laravel\Http\Controllers\DashboardController;
 use Oilstone\SystemStatus\Integrations\Laravel\Http\Controllers\HeartbeatController;
 use Oilstone\SystemStatus\Integrations\Laravel\Http\Controllers\PingController;
 use Oilstone\SystemStatus\Integrations\Laravel\Http\Controllers\StatusController;
@@ -20,6 +21,8 @@ use Oilstone\SystemStatus\SystemStatus;
 class SystemStatusServiceProvider extends ServiceProvider
 {
     protected const CONFIG = __DIR__ . '/config/system-status.php';
+
+    protected const VIEWS = __DIR__ . '/resources/views';
 
     public function register(): void
     {
@@ -39,8 +42,11 @@ class SystemStatusServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->loadViewsFrom(static::VIEWS, 'system-status');
+
         if ($this->app->runningInConsole()) {
             $this->publishes([static::CONFIG => $this->app->configPath('system-status.php')], 'system-status-config');
+            $this->publishes([static::VIEWS => $this->app->resourcePath('views/vendor/system-status')], 'system-status-views');
 
             $this->commands([CheckCommand::class]);
         }
@@ -54,7 +60,8 @@ class SystemStatusServiceProvider extends ServiceProvider
             return;
         }
 
-        $settings = $this->app->make('config')->get('system-status.routes', []);
+        $config = $this->app->make('config');
+        $settings = $config->get('system-status.routes', []);
 
         if (! ($settings['enabled'] ?? true)) {
             return;
@@ -62,12 +69,23 @@ class SystemStatusServiceProvider extends ServiceProvider
 
         Route::prefix($settings['prefix'] ?? 'monitors')
             ->middleware($settings['middleware'] ?? [])
-            ->group(function () use ($settings) {
+            ->group(function () use ($settings, $config) {
                 Route::get('heartbeat', HeartbeatController::class)->name('system-status.heartbeat');
                 Route::get('ping', PingController::class)->name('system-status.ping');
                 Route::get('status', StatusController::class)
                     ->middleware([AuthorizeStatusRequest::class, ...($settings['status_middleware'] ?? [])])
                     ->name('system-status.status');
+
+                if ($config->get('system-status.dashboard.enabled', true)) {
+                    // The dashboard shows the same report, so it is protected at least as well as the status
+                    Route::get('dashboard', DashboardController::class)
+                        ->middleware([
+                            AuthorizeStatusRequest::class,
+                            ...($settings['status_middleware'] ?? []),
+                            ...($settings['dashboard_middleware'] ?? []),
+                        ])
+                        ->name('system-status.dashboard');
+                }
             });
     }
 }

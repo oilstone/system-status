@@ -81,11 +81,32 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Dashboard
+    |--------------------------------------------------------------------------
+    |
+    | The status as a page for people to open in a browser. It shows the
+    | same report as the status endpoint, with the same access rules,
+    | categories, fail_at and expose_errors, and the same query string
+    | options. It refreshes in place every refresh_seconds (0 to stop).
+    | Publish the system-status-views tag to customise it.
+    |
+    */
+
+    'dashboard' => [
+        'enabled' => true,
+        'title' => null, // Defaults to "{app.name} status"
+        'refresh_seconds' => 30,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Routes
     |--------------------------------------------------------------------------
     |
-    | Registers {prefix}/heartbeat, {prefix}/ping and {prefix}/status. They
-    | sit outside the "web" group so polling never starts a session.
+    | Registers {prefix}/heartbeat, {prefix}/ping, {prefix}/status and
+    | {prefix}/dashboard. They sit outside the "web" group so polling
+    | never starts a session. status_middleware also applies to the
+    | dashboard, which shows the same report.
     |
     */
 
@@ -94,6 +115,7 @@ return [
         'prefix' => 'monitors',
         'middleware' => [],
         'status_middleware' => [],
+        'dashboard_middleware' => [],
     ],
 
 ];

@@ -16,6 +16,7 @@ A rewrite. See [UPGRADE.md](UPGRADE.md) for breaking changes.
 - `MakesHttpRequests` for monitors of HTTP APIs, which keeps query strings and credentials out of error messages.
 - Laravel integration: auto-discovered service provider and facade, publishable config, `database`, `cache`, `disk` and `queue` monitor types, and monitors built through the container.
 - `/monitors/heartbeat`, `/monitors/ping` (load balancers, cached per server for 10 seconds by default) and `/monitors/status` (detailed JSON, protected by token, IP allow-list or environment).
+- `/monitors/dashboard`: the status report as a self-refreshing page for people, with the same access rules as `/monitors/status` and a publishable view.
 - `php artisan system-status:check` for deploy pipelines.
 
 [Unreleased]: https://github.com/oilstone/system-status/compare/v2.0.0...HEAD
