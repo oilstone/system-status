@@ -2,7 +2,7 @@
 
 ## From 1.x to 2.0
 
-2.0 is a rewrite and requires PHP 8.1+ (and Laravel 10+ for the Laravel integration). Breaking changes:
+2.0 is a rewrite and requires PHP 8.2+ (and Laravel 12+ for the Laravel integration). Breaking changes:
 
 - `SystemStatus` is now an instance rather than static methods. In Laravel, use the facade or inject it.
 - `isSystemOkay()` → `passes()`. `scores()` and `errors()` → `check()`, which returns a `Report` (`toArray()`, `failures()`, `rating()`).

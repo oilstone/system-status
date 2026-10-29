@@ -12,6 +12,14 @@ All notable changes to this package are documented here. The format follows [Kee
 - `MakesHttpRequests::sdkHttpClient()`, a Guzzle client for third-party SDKs with the monitor's timeouts and options.
 - `Probe::run()`, which checks and rates a built monitor as the status does.
 
+### Changed
+
+- Requires PHP 8.2+, and Laravel 12+ for the Laravel integration. PHP 8.1 and Laravel 10 and 11 no longer receive security fixes.
+
+### Removed
+
+- The `queue` monitor's fallback for drivers without `pendingSize()` and `creationTimeOfOldestPendingJob()`, which every Laravel 12+ queue implements.
+
 ## [2.0.0]
 
 A rewrite. See [UPGRADE.md](UPGRADE.md) for breaking changes.

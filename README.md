@@ -2,7 +2,7 @@
 
 Health checks for the things an application depends on, reported as a pass/fail ping for load balancers, a detailed JSON report for uptime monitors and people, and a console command for deploy pipelines.
 
-Requires PHP 8.1+. The Laravel integration supports Laravel 10 and later.
+Requires PHP 8.2+. The Laravel integration supports Laravel 12 and later.
 
 ## Concepts
 

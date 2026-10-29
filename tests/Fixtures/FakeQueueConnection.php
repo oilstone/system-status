@@ -3,7 +3,7 @@
 namespace Oilstone\SystemStatus\Tests\Fixtures;
 
 /**
- * A queue connection as drivers report it from Laravel 11, with pending counts and job ages.
+ * A queue connection that reports pending counts and job ages.
  */
 class FakeQueueConnection
 {

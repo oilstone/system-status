@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`oilstone/system-status`: a PHP 8.1+ library of health checks ("monitors") for an application's dependencies, with an optional Laravel 10+ integration (ping/status/heartbeat routes, a console command, a facade). README.md is the user-facing reference for config options and monitor types, UPGRADE.md covers 1.x → 2.0, and CHANGELOG.md records releases; keep them in sync when changing behaviour or options.
+`oilstone/system-status`: a PHP 8.2+ library of health checks ("monitors") for an application's dependencies, with an optional Laravel 12+ integration (ping/status/heartbeat routes, a console command, a facade). README.md is the user-facing reference for config options and monitor types, UPGRADE.md covers 1.x → 2.0, and CHANGELOG.md records releases; keep them in sync when changing behaviour or options.
 
 ## Commands
 
@@ -19,7 +19,7 @@ composer analyse                                 # PHPStan level 8 (phpstan.neon
 composer format                                  # Pint with the house style in pint.json
 ```
 
-Guzzle, Laravel and Testbench are dev dependencies only; in production they are optional (`suggest`), so code outside `Integrations/Laravel` and `Concerns/MakesHttpRequests` must not depend on them. CI (`.github/workflows/tests.yml`) runs every supported PHP version against Laravel 10–13, plus Pint and PHPStan on the latest. `pint.json` keeps this codebase's style (`! $x`, spaced concatenation, multi-line empty bodies), which differs from Pint's current Laravel preset.
+Guzzle, Laravel and Testbench are dev dependencies only; in production they are optional (`suggest`), so code outside `Integrations/Laravel` and `Concerns/MakesHttpRequests` must not depend on them. CI (`.github/workflows/tests.yml`) runs every supported PHP version against Laravel 12 and 13, plus Pint and PHPStan on the latest. `pint.json` keeps this codebase's style (`! $x`, spaced concatenation, multi-line empty bodies), which differs from Pint's current Laravel preset.
 
 Testing notes:
 - Laravel tests extend `tests/Laravel/TestCase.php`. Config read while the package boots (monitors, routes) is set with `$this->monitors([...])` or `$this->rebootWith([...])`, which refresh the application, so set up spies such as `Log::spy()` after calling them.
