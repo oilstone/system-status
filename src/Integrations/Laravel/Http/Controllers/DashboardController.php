@@ -9,10 +9,13 @@ use Illuminate\Http\Response;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 use Oilstone\SystemStatus\Integrations\Laravel\Http\StatusQuery;
+use Oilstone\SystemStatus\Integrations\Laravel\Watches\WatchRegistry;
 use Oilstone\SystemStatus\Rating;
 use Oilstone\SystemStatus\Report;
 use Oilstone\SystemStatus\Result;
 use Oilstone\SystemStatus\SystemStatus;
+use Oilstone\SystemStatus\WatchState;
+use Oilstone\SystemStatus\WatchStatus;
 
 /**
  * The status report as a page for people, with the same access rules and options as the JSON status.
@@ -31,7 +34,7 @@ class DashboardController
     {
     }
 
-    public function __invoke(Request $request, SystemStatus $status): Response
+    public function __invoke(Request $request, SystemStatus $status, WatchRegistry $watches): Response
     {
         $settings = $this->config->get('system-status.status', []);
         $dashboard = $this->config->get('system-status.dashboard', []);
@@ -55,6 +58,7 @@ class DashboardController
             'error' => $error,
             'failAt' => $failAt,
             ...$this->summarise($report, $failAt),
+            ...$this->summariseWatches($watches->statuses()),
         ])->render();
 
         return new Response($html, $error === null ? 200 : 422, [
@@ -96,6 +100,52 @@ class DashboardController
             'categories' => $categories,
             'failures' => $report === null ? 0 : count($report->failures($failAt)),
             'slowest' => max([0.0, ...array_map(fn (Result $result) => $result->duration, $results)]),
+        ];
+    }
+
+    /**
+     * Each watch as it was left by its last run. Watches never change the headline or pass/fail.
+     *
+     * @param array<string, WatchStatus|null> $statuses
+     */
+    protected function summariseWatches(array $statuses): array
+    {
+        $watches = [];
+
+        foreach ($statuses as $name => $status) {
+            $state = match (true) {
+                $status === null => 'unknown',
+                $status->checkedAt === null => 'pending',
+                default => $status->state->value,
+            };
+
+            $watches[] = [
+                'name' => $name,
+                'label' => Str::headline($name),
+                'state' => $state,
+                'state_label' => ['up' => 'Up', 'down' => 'Down', 'pending' => 'Not checked yet', 'unknown' => 'Unknown'][$state],
+                'detail' => match (true) {
+                    $status === null => 'Its state could not be read',
+                    $status->failures > 0 => sprintf('%d consecutive %s', $status->failures, Str::plural('failure', $status->failures)),
+                    $status->passes > 0 => sprintf('%d consecutive %s', $status->passes, Str::plural('pass', $status->passes)),
+                    default => null,
+                },
+                'forced' => $status?->forced?->value,
+                'forced_until' => $status?->forcedUntil,
+                'checked_at' => $status?->checkedAt,
+            ];
+        }
+
+        $down = count(array_filter($statuses, fn (?WatchStatus $status) => $status?->checkedAt !== null && $status->state === WatchState::Down));
+        $up = count(array_filter($statuses, fn (?WatchStatus $status) => $status?->checkedAt !== null && $status->state === WatchState::Up));
+
+        return [
+            'watches' => $watches,
+            'watchSummary' => match (true) {
+                $down > 0 => ['state' => 'down', 'label' => $down . ' down'],
+                $up === count($statuses) => ['state' => 'up', 'label' => 'All up'],
+                default => ['state' => 'unknown', 'label' => $up . ' of ' . count($statuses) . ' up'],
+            },
         ];
     }
 

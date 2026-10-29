@@ -2,6 +2,8 @@ parameters:
     level: 8
     paths:
         - src
+        # Uses RatesUsage, which nothing in src does, so the trait is analysed
+        - tests/Fixtures/QuotaMonitor.php
     ignoreErrors:
         # Monitor options and config arrays are deliberately loose; their shapes are documented per class
         -

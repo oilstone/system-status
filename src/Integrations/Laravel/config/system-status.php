@@ -100,6 +100,49 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Watches
+    |--------------------------------------------------------------------------
+    |
+    | Scheduled checks of single monitors that track whether each is up or
+    | down, so a handler can alert or fail over. Definitions are keyed by
+    | watch name (letters, numbers, dots, dashes and underscores) and take:
+    |
+    | - monitor: a monitor definition, as in the monitors section (required)
+    | - failures: consecutive failed checks before it is down (default 1)
+    | - recoveries: consecutive passing checks before it is up (default 1)
+    | - fail_at: the rating that counts as failed (default 'failed')
+    | - handler: a WatchHandler class, built through the container, that
+    |   is told the outcome of every run, not only changes
+    | - cron: when to run it (default every minute)
+    |
+    | Any other keys are passed to the handler as its options. Watches
+    | dispatch MonitorWentDown and MonitorRecovered events on changes,
+    | show on the dashboard and status, and never affect ping or pass/fail.
+    |
+    | State is kept in cache_store (the default store when null). Unlike
+    | ping.cache_store, it must be shared by every server and support
+    | atomic locks, e.g. redis, memcached or database. Each watch runs on
+    | one server at a time. Set schedule to false to run the watches with
+    | system-status:watch yourself. Force one up or down with
+    | system-status:force.
+    |
+    */
+
+    'watches' => [
+        'cache_store' => env('SYSTEM_STATUS_WATCH_CACHE_STORE'),
+        'schedule' => true,
+        'definitions' => [
+            // 'payments' => [
+            //     'monitor' => ['type' => 'http', 'url' => 'https://payments.example.com/health'],
+            //     'failures' => 3,
+            //     'recoveries' => 2,
+            //     'handler' => App\Watches\FailOverPayments::class,
+            // ],
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Routes
     |--------------------------------------------------------------------------
     |

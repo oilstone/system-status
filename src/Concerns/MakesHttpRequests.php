@@ -14,6 +14,9 @@ use Throwable;
  * - timeout: seconds for the whole request (default 5)
  * - connect_timeout: seconds to establish a connection (default 3)
  * - options: Guzzle client defaults such as headers, auth, proxy or verify
+ *
+ * Use http() for requests made by the monitor itself, and sdkHttpClient() for a client to give
+ * a third-party SDK.
  */
 trait MakesHttpRequests
 {
@@ -23,16 +26,37 @@ trait MakesHttpRequests
 
     protected function http(): ClientInterface
     {
-        if ($this->httpClient === null && ! class_exists(Client::class)) {
+        return $this->httpClient ??= $this->makeHttpClient(forSdk: false);
+    }
+
+    /**
+     * A Guzzle client for third-party SDKs, with the same timeouts and options as http(). Guzzle's
+     * http_errors is left at its default, because SDKs rely on the exceptions it throws.
+     */
+    protected function sdkHttpClient(): Client
+    {
+        return $this->makeHttpClient(forSdk: true);
+    }
+
+    private function makeHttpClient(bool $forSdk): Client
+    {
+        if (! class_exists(Client::class)) {
             $this->fail('HTTP checks need guzzlehttp/guzzle; run composer require guzzlehttp/guzzle');
         }
 
-        return $this->httpClient ??= new Client(array_replace([
+        $defaults = [
             'timeout' => $this->config['timeout'] ?? 5,
             'connect_timeout' => $this->config['connect_timeout'] ?? 3,
             'http_errors' => false,
             'headers' => ['User-Agent' => 'oilstone/system-status'],
-        ], $this->config['options'] ?? []));
+        ];
+        $options = $this->config['options'] ?? [];
+
+        if ($forSdk) {
+            unset($defaults['http_errors'], $options['http_errors']);
+        }
+
+        return new Client(array_replace($defaults, $options));
     }
 
     /**

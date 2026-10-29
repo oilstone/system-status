@@ -1,0 +1,99 @@
+<?php
+
+namespace Oilstone\SystemStatus;
+
+use DateTimeImmutable;
+use DateTimeInterface;
+use DateTimeZone;
+use InvalidArgumentException;
+use Psr\SimpleCache\CacheInterface;
+use RuntimeException;
+
+/**
+ * Keeps each watch's state, counters and override in a PSR-16 cache. Every process that runs or
+ * forces a watch must share the cache, or each will track its own state.
+ */
+class WatchStore
+{
+    public function __construct(protected CacheInterface $cache, protected string $prefix = 'system-status.watch.')
+    {
+    }
+
+    public function get(string $watch): WatchStatus
+    {
+        $stored = $this->cache->get($this->key($watch, 'state'));
+        $override = $this->cache->get($this->key($watch, 'override'));
+
+        $state = is_array($stored) ? WatchState::tryFrom((string) ($stored['state'] ?? '')) : null;
+        $forced = is_array($override) ? WatchState::tryFrom((string) ($override['state'] ?? '')) : null;
+
+        return new WatchStatus(
+            $state ?? WatchState::Up,
+            $state === null ? 0 : max(0, (int) ($stored['failures'] ?? 0)),
+            $state === null ? 0 : max(0, (int) ($stored['passes'] ?? 0)),
+            $state === null ? null : $this->time($stored['checked_at'] ?? null),
+            $forced,
+            $forced === null ? null : $this->time($override['expires_at'] ?? null),
+        );
+    }
+
+    /**
+     * @throws RuntimeException When the cache refuses the write
+     */
+    public function save(string $watch, WatchState $state, int $failures, int $passes, DateTimeInterface $checkedAt): void
+    {
+        $saved = $this->cache->set($this->key($watch, 'state'), [
+            'state' => $state->value,
+            'failures' => $failures,
+            'passes' => $passes,
+            'checked_at' => $checkedAt->getTimestamp(),
+        ]);
+
+        if (! $saved) {
+            throw new RuntimeException(sprintf('Unable to save the state of the %s watch', $watch));
+        }
+    }
+
+    /**
+     * Use this state instead of checking, from the watch's next run until cleared.
+     *
+     * @param int|null $seconds Clear the override after this long; it lasts until cleared when null
+     *
+     * @throws RuntimeException When the cache refuses the write
+     */
+    public function force(string $watch, WatchState $state, ?int $seconds = null): void
+    {
+        if ($seconds !== null && $seconds < 1) {
+            throw new InvalidArgumentException('An override must last at least a second');
+        }
+
+        // The TTL clears the override; the expiry is only kept to show when that will happen
+        $saved = $this->cache->set($this->key($watch, 'override'), [
+            'state' => $state->value,
+            'expires_at' => $seconds === null ? null : time() + $seconds,
+        ], $seconds);
+
+        if (! $saved) {
+            throw new RuntimeException(sprintf('Unable to force the %s watch %s', $watch, $state->value));
+        }
+    }
+
+    public function clear(string $watch): void
+    {
+        $this->cache->delete($this->key($watch, 'override'));
+    }
+
+    protected function key(string $watch, string $record): string
+    {
+        return $this->prefix . $watch . '.' . $record;
+    }
+
+    protected function time(mixed $timestamp): ?DateTimeImmutable
+    {
+        if (! is_int($timestamp)) {
+            return null;
+        }
+
+        return (new DateTimeImmutable('@' . $timestamp))->setTimezone(new DateTimeZone(date_default_timezone_get()));
+    }
+}

@@ -2,11 +2,14 @@
 
 namespace Oilstone\SystemStatus\Integrations\Laravel;
 
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Foundation\CachesRoutes;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Oilstone\SystemStatus\Integrations\Laravel\Console\CheckCommand;
+use Oilstone\SystemStatus\Integrations\Laravel\Console\ForceCommand;
+use Oilstone\SystemStatus\Integrations\Laravel\Console\WatchCommand;
 use Oilstone\SystemStatus\Integrations\Laravel\Http\Controllers\DashboardController;
 use Oilstone\SystemStatus\Integrations\Laravel\Http\Controllers\HeartbeatController;
 use Oilstone\SystemStatus\Integrations\Laravel\Http\Controllers\PingController;
@@ -16,7 +19,11 @@ use Oilstone\SystemStatus\Integrations\Laravel\Monitors\CacheStore;
 use Oilstone\SystemStatus\Integrations\Laravel\Monitors\Database;
 use Oilstone\SystemStatus\Integrations\Laravel\Monitors\Disk;
 use Oilstone\SystemStatus\Integrations\Laravel\Monitors\Queue;
+use Oilstone\SystemStatus\Integrations\Laravel\Watches\ContainerWatcher;
+use Oilstone\SystemStatus\Integrations\Laravel\Watches\WatchRegistry;
 use Oilstone\SystemStatus\SystemStatus;
+use Oilstone\SystemStatus\Watcher;
+use Oilstone\SystemStatus\WatchStore;
 
 class SystemStatusServiceProvider extends ServiceProvider
 {
@@ -38,6 +45,8 @@ class SystemStatusServiceProvider extends ServiceProvider
         });
 
         $this->app->alias(SystemStatus::class, 'system-status');
+
+        $this->registerWatches();
     }
 
     public function boot(): void
@@ -48,10 +57,51 @@ class SystemStatusServiceProvider extends ServiceProvider
             $this->publishes([static::CONFIG => $this->app->configPath('system-status.php')], 'system-status-config');
             $this->publishes([static::VIEWS => $this->app->resourcePath('views/vendor/system-status')], 'system-status-views');
 
-            $this->commands([CheckCommand::class]);
+            $this->commands([CheckCommand::class, WatchCommand::class, ForceCommand::class]);
+
+            $this->scheduleWatches();
         }
 
         $this->registerRoutes();
+    }
+
+    protected function registerWatches(): void
+    {
+        $this->app->singleton(WatchStore::class, function (Container $app): WatchStore {
+            return new WatchStore($app->make('cache')->store($app->make('config')->get('system-status.watches.cache_store')));
+        });
+
+        $this->app->singleton(WatchRegistry::class, function (Container $app): WatchRegistry {
+            return new WatchRegistry(
+                $app->make('config')->get('system-status.watches.definitions', []),
+                fn () => $app->make(WatchStore::class),
+            );
+        });
+
+        $this->app->singleton(Watcher::class, function (Container $app): Watcher {
+            // Shares the status factory, so watches can use every registered monitor type
+            return new ContainerWatcher($app->make(SystemStatus::class)->factory(), $app->make(WatchStore::class), $app, $app->make('events'));
+        });
+    }
+
+    protected function scheduleWatches(): void
+    {
+        $settings = $this->app->make('config')->get('system-status.watches', []);
+
+        if (! ($settings['schedule'] ?? true) || empty($settings['definitions'])) {
+            return;
+        }
+
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+            $watches = $this->app->make(WatchRegistry::class);
+
+            foreach ($watches->names() as $name) {
+                $schedule->command('system-status:watch', [$name])
+                    ->cron($watches->cron($name))
+                    ->onOneServer()
+                    ->withoutOverlapping();
+            }
+        });
     }
 
     protected function registerRoutes(): void
