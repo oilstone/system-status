@@ -18,9 +18,11 @@ use Oilstone\SystemStatus\Exceptions\WatchHandlerFailed;
 use Oilstone\SystemStatus\Integrations\Laravel\Console\WatchCommand;
 use Oilstone\SystemStatus\Integrations\Laravel\Events\MonitorRecovered;
 use Oilstone\SystemStatus\Integrations\Laravel\Events\MonitorWentDown;
+use Oilstone\SystemStatus\Integrations\Laravel\Watches\WatchEventFailed;
 use Oilstone\SystemStatus\Tests\Fixtures\RecordingWatchHandler;
 use Oilstone\SystemStatus\WatchState;
 use Oilstone\SystemStatus\WatchStore;
+use RuntimeException;
 
 class WatchesTest extends TestCase
 {
@@ -230,6 +232,48 @@ class WatchesTest extends TestCase
 
         $exceptions->shouldHaveReceived('report')->once()->with(Mockery::type(WatchHandlerFailed::class));
         $this->assertSame(WatchState::Down, $this->store()->get('payments')->state);
+        $this->assertNull($this->store()->get('payments')->failedRunAt, 'The run checked, so it is not a failed run');
+    }
+
+    public function test_a_failing_event_listener_leaves_the_saved_check_standing(): void
+    {
+        $this->watches(['payments' => ['monitor' => ['type' => 'callback', 'callback' => fn () => false]]]);
+
+        Event::listen(MonitorWentDown::class, fn () => throw new RuntimeException('Slack is down'));
+        $exceptions = $this->spy(ExceptionHandler::class);
+
+        $this->artisan('system-status:watch payments')
+            ->expectsOutputToContain('DOWN went down')
+            ->expectsOutputToContain('A MonitorWentDown listener for the payments watch failed: Slack is down')
+            ->assertFailed();
+
+        $exceptions->shouldHaveReceived('report')->once()->with(Mockery::type(WatchEventFailed::class));
+
+        $status = $this->store()->get('payments');
+
+        $this->assertSame(WatchState::Down, $status->state);
+        $this->assertNotNull($status->checkedAt);
+        $this->assertNull($status->failedRunAt, 'The run checked, so it is not a failed run');
+    }
+
+    public function test_a_listener_failing_after_the_handler_reports_both(): void
+    {
+        $this->watches(['payments' => ['monitor' => ['type' => 'callback', 'callback' => fn () => false], 'handler' => RecordingWatchHandler::class, 'throw' => true]]);
+
+        Event::listen(MonitorWentDown::class, fn () => throw new RuntimeException('Slack is down'));
+        $exceptions = $this->spy(ExceptionHandler::class);
+
+        $this->artisan('system-status:watch payments')
+            ->expectsOutputToContain('DOWN went down')
+            ->expectsOutputToContain('A MonitorWentDown listener for the payments watch failed: Slack is down (after the handler failed too)')
+            ->assertFailed();
+
+        $exceptions->shouldHaveReceived('report')->twice();
+        $exceptions->shouldHaveReceived('report')->with(Mockery::type(WatchEventFailed::class));
+        $exceptions->shouldHaveReceived('report')->with(Mockery::on(
+            fn ($e) => $e instanceof WatchHandlerFailed && $e->getMessage() === 'The payments watch handler failed: Failover API refused the request',
+        ));
+        $this->assertNull($this->store()->get('payments')->failedRunAt);
     }
 
     public function test_handlers_are_built_through_the_container(): void

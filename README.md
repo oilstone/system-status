@@ -179,7 +179,7 @@ class FailOverPayments implements WatchHandler
 
 If a watch's monitor or handler can't be built, the run fails without changing the state or calling the handler, so a misconfiguration is never mistaken for an outage.
 
-When a watch goes down or recovers, Laravel's `MonitorWentDown` or `MonitorRecovered` event is dispatched (`Integrations\Laravel\Events`), carrying the outcome as `$event->outcome`, so you can listen for changes instead of, or as well as, writing a handler.
+When a watch goes down or recovers, Laravel's `MonitorWentDown` or `MonitorRecovered` event is dispatched (`Integrations\Laravel\Events`), carrying the outcome as `$event->outcome`, so you can listen for changes instead of, or as well as, writing a handler. A listener that throws doesn't undo the run: `system-status:watch` fails and reports a `WatchEventFailed`, carrying the `outcome`, and the saved state stands.
 
 State is kept in `watches.cache_store` (`SYSTEM_STATUS_WATCH_CACHE_STORE`, the default store when null). Unlike `ping.cache_store`, it must be shared by every server and support atomic locks, such as `redis`, `memcached` or `database`.
 
@@ -362,7 +362,7 @@ $store->clear('payments');
 
 A watch's `monitor` can be the id of a monitor added to `$status` with a key, e.g. `$status->add([...], 'services', 'payments')` and `'monitor' => 'services.payments'`. `$status->checkMonitor('services.payments')` checks one monitor on its own.
 
-`Watcher::run()` throws when the monitor or handler can't be built (changing nothing), and throws `WatchHandlerFailed`, carrying the `outcome`, when the handler throws after the state was saved. Run each watch from one process at a time. `$store->get('payments')` returns the stored `WatchStatus`, including the last check's `rating`, `duration` and `error`.
+`Watcher::run()` throws when the monitor or handler can't be built (changing nothing), and throws `WatchHandlerFailed`, carrying the `outcome`, when the handler throws after the state was saved. It extends `WatchFailedAfterSave`, so catch that to handle any failure that leaves the outcome standing. Run each watch from one process at a time. `$store->get('payments')` returns the stored `WatchStatus`, including the last check's `rating`, `duration` and `error`.
 
 ## Upgrading from 1.x
 

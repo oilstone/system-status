@@ -3,19 +3,18 @@
 namespace Oilstone\SystemStatus\Exceptions;
 
 use Oilstone\SystemStatus\WatchOutcome;
-use RuntimeException;
 use Throwable;
 
 /**
  * A watch handler threw. The watch's state was already saved, so the outcome stands.
  */
-class WatchHandlerFailed extends RuntimeException
+class WatchHandlerFailed extends WatchFailedAfterSave
 {
-    public function __construct(public readonly WatchOutcome $outcome, Throwable $previous)
+    public function __construct(WatchOutcome $outcome, Throwable $previous)
     {
         parent::__construct(
+            $outcome,
             sprintf('The %s watch handler failed: %s', $outcome->watch, $previous->getMessage() !== '' ? $previous->getMessage() : $previous::class),
-            0,
             $previous,
         );
     }

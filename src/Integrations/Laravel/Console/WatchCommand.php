@@ -11,7 +11,8 @@ use Illuminate\Contracts\Config\Repository;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Str;
-use Oilstone\SystemStatus\Exceptions\WatchHandlerFailed;
+use Oilstone\SystemStatus\Exceptions\WatchFailedAfterSave;
+use Oilstone\SystemStatus\Integrations\Laravel\Watches\WatchEventFailed;
 use Oilstone\SystemStatus\Integrations\Laravel\Watches\WatchRegistry;
 use Oilstone\SystemStatus\Watch;
 use Oilstone\SystemStatus\Watcher;
@@ -76,8 +77,13 @@ class WatchCommand extends Command
                 $this->components->error($e->getMessage());
                 $exceptions->report($e);
 
-                // A handler failure follows a saved check; anything else stopped the run before it, so say why
-                if (! $e instanceof WatchHandlerFailed) {
+                if ($e instanceof WatchEventFailed && $e->handlerFailure !== null) {
+                    $exceptions->report($e->handlerFailure);
+                }
+
+                // A handler or listener failure follows a saved check; anything else stopped the run before it, so
+                // say why
+                if (! $e instanceof WatchFailedAfterSave) {
                     $this->recordFailedRun($watcher, $name, $e);
                 }
             }
@@ -114,7 +120,7 @@ class WatchCommand extends Command
             }
 
             $this->print($watch, $watcher->run($watch));
-        } catch (WatchHandlerFailed $e) {
+        } catch (WatchFailedAfterSave $e) {
             $this->print($watch, $e->outcome);
 
             throw $e;
