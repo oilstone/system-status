@@ -3,6 +3,7 @@
 namespace Oilstone\SystemStatus\Tests\Unit;
 
 use Carbon\Carbon;
+use DateTimeImmutable;
 use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\Repository;
 use InvalidArgumentException;
@@ -373,9 +374,29 @@ class WatcherTest extends TestCase
     public function test_status_converts_to_an_array(): void
     {
         $this->assertSame(
-            ['state' => 'up', 'failures' => 0, 'passes' => 0, 'forced' => null, 'forced_until' => null, 'checked_at' => null, 'last_check' => null],
+            ['state' => 'up', 'failures' => 0, 'passes' => 0, 'forced' => null, 'forced_until' => null, 'checked_at' => null, 'last_check' => null, 'failed_run' => null],
             $this->store->get('payments')->toArray(),
         );
+    }
+
+    public function test_a_failed_run_is_kept_until_a_run_saves_its_check(): void
+    {
+        $this->store->save('payments', WatchState::Down, 2, 0, new DateTimeImmutable('@1000'));
+        $this->store->fail('payments', 'The payments watch is misconfigured', new DateTimeImmutable('@2000'));
+
+        $status = $this->store->get('payments');
+
+        $this->assertSame(WatchState::Down, $status->state);
+        $this->assertSame(2, $status->failures);
+        $this->assertSame(1000, $status->checkedAt?->getTimestamp());
+        $this->assertSame(2000, $status->failedRunAt?->getTimestamp());
+        $this->assertSame('The payments watch is misconfigured', $status->failedRunError);
+        $this->assertSame('Run failed', $status->toArray(false)['failed_run']['error']);
+
+        $this->store->save('payments', WatchState::Down, 3, 0, new DateTimeImmutable('@3000'));
+
+        $this->assertNull($this->store->get('payments')->failedRunAt);
+        $this->assertNull($this->store->get('payments')->failedRunError);
     }
 
     public function test_definitions_are_read_into_a_watch(): void

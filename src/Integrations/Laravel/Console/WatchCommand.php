@@ -9,6 +9,7 @@ use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Contracts\Debug\ExceptionHandler;
+use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Str;
 use Oilstone\SystemStatus\Exceptions\WatchHandlerFailed;
 use Oilstone\SystemStatus\Integrations\Laravel\Watches\WatchRegistry;
@@ -74,6 +75,11 @@ class WatchCommand extends Command
 
                 $this->components->error($e->getMessage());
                 $exceptions->report($e);
+
+                // A handler failure follows a saved check; anything else stopped the run before it, so say why
+                if (! $e instanceof WatchHandlerFailed) {
+                    $this->recordFailedRun($watcher, $name, $e);
+                }
             }
         }
 
@@ -114,6 +120,18 @@ class WatchCommand extends Command
             throw $e;
         } finally {
             $this->release($lock);
+        }
+    }
+
+    /**
+     * Without this, a watch that fails every run would only look overdue, as if the scheduler had stopped.
+     */
+    protected function recordFailedRun(Watcher $watcher, string $name, Throwable $e): void
+    {
+        try {
+            $watcher->store()->fail($name, $e->getMessage() !== '' ? $e->getMessage() : $e::class, Date::now());
+        } catch (Throwable) {
+            // The store may be what failed; the exception has been reported either way
         }
     }
 

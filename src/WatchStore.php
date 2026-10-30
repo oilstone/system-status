@@ -23,6 +23,8 @@ class WatchStore
     {
         $stored = $this->cache->get($this->key($watch, 'state'));
         $override = $this->cache->get($this->key($watch, 'override'));
+        $failed = $this->cache->get($this->key($watch, 'failed'));
+        $failedAt = is_array($failed) ? $this->time($failed['at'] ?? null) : null;
 
         $state = is_array($stored) ? WatchState::tryFrom((string) ($stored['state'] ?? '')) : null;
         $forced = is_array($override) ? WatchState::tryFrom((string) ($override['state'] ?? '')) : null;
@@ -37,6 +39,8 @@ class WatchStore
             $state === null ? null : Rating::tryParse(is_string($stored['rating'] ?? null) ? $stored['rating'] : null),
             $state === null || ! is_numeric($stored['duration_ms'] ?? null) ? null : (float) $stored['duration_ms'],
             $state === null || ! is_string($stored['error'] ?? null) ? null : $stored['error'],
+            $failedAt,
+            $failedAt === null ? null : (string) ($failed['error'] ?? ''),
         );
     }
 
@@ -60,6 +64,18 @@ class WatchStore
         if (! $saved) {
             throw new RuntimeException(sprintf('Unable to save the state of the %s watch', $watch));
         }
+
+        // This run got as far as checking, so any earlier failed run no longer explains a stale state
+        $this->cache->delete($this->key($watch, 'failed'));
+    }
+
+    /**
+     * Record a run that stopped before it could check, such as one of a misconfigured watch, without changing the
+     * watch's state, so whoever reads it can see why it hasn't been checked. Cleared by the next save().
+     */
+    public function fail(string $watch, string $error, DateTimeInterface $at): void
+    {
+        $this->cache->set($this->key($watch, 'failed'), ['at' => $at->getTimestamp(), 'error' => $error]);
     }
 
     /**

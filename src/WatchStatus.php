@@ -16,6 +16,9 @@ final class WatchStatus
      * @param Rating|null $rating The last check's rating; null before the first check or when the last run was forced
      * @param float|null $duration Milliseconds the last check took
      * @param string|null $error Why the last check failed, when it threw
+     * @param DateTimeImmutable|null $failedRunAt When a run last stopped before it could check, e.g. because the watch
+     *                                            is misconfigured; null once a later run saves its result
+     * @param string|null $failedRunError Why that run stopped
      */
     public function __construct(
         public readonly WatchState $state = WatchState::Up,
@@ -27,6 +30,8 @@ final class WatchStatus
         public readonly ?Rating $rating = null,
         public readonly ?float $duration = null,
         public readonly ?string $error = null,
+        public readonly ?DateTimeImmutable $failedRunAt = null,
+        public readonly ?string $failedRunError = null,
     ) {
     }
 
@@ -47,6 +52,10 @@ final class WatchStatus
                 'duration_ms' => $this->duration,
                 'error' => $this->error === null ? null : ($exposeErrors ? $this->error : 'Check failed'),
             ], fn (mixed $value) => $value !== null),
+            'failed_run' => $this->failedRunAt === null ? null : [
+                'at' => $this->failedRunAt->format(DateTimeInterface::ATOM),
+                'error' => $exposeErrors ? $this->failedRunError : 'Run failed',
+            ],
         ];
     }
 }

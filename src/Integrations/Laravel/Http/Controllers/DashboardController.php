@@ -118,13 +118,9 @@ class DashboardController
                 return $this->respond(sprintf('No watch named "%s" is defined', $watch), 404, 'text/plain');
             }
 
-            // A watch of a status monitor is checked as that monitor, so its row shows the result too
-            $monitor = $watch === '' || $watch === '*' ? $monitor : (string) $watches->monitorId($watch, $status);
-
             $results = match (true) {
-                $watch === '*' => $this->checkWatches($status, $watches),
+                $watch !== '' => $this->checkWatches($status, $watches, $watch === '*' ? $watches->names() : [$watch]),
                 $monitor !== '' => [$monitor => $status->checkMonitor($monitor)],
-                $watch !== '' => ['watch:' . $watch => $status->run($watches->get($watch)->monitor, 'watches')],
                 default => $this->checkAll($status, $status->definitions($query->categories)),
             };
         } catch (UnknownMonitor $e) {
@@ -144,7 +140,7 @@ class DashboardController
                 'slot' => $id,
                 'result' => $described,
                 // A watch's own monitor has no row
-                'monitor' => $watch !== '' && ! $status->hasMonitor($id) ? null : $this->monitorItem($id, $result->name, $described, $links[$id] ?? []),
+                'monitor' => $watch !== '' && str_starts_with($id, 'watch:') ? null : $this->monitorItem($id, $result->name, $described, $links[$id] ?? []),
             ];
         }
 
@@ -184,16 +180,18 @@ class DashboardController
     }
 
     /**
-     * Each watch's monitor, keyed by the slot its result goes in: the id of the status monitor it checks, which runs
-     * once however many watches check it, or watch:{name} for a monitor of its own.
+     * The monitor of each of these watches, keyed by the slot its result goes in: the id of the status monitor it
+     * checks, so its row shows the result too and it runs once however many watches check it, or watch:{name} for a
+     * monitor of its own.
      *
+     * @param list<string> $names
      * @return array<string, Result>
      */
-    protected function checkWatches(SystemStatus $status, WatchRegistry $watches): array
+    protected function checkWatches(SystemStatus $status, WatchRegistry $watches, array $names): array
     {
         $results = [];
 
-        foreach ($watches->names() as $name) {
+        foreach ($names as $name) {
             $id = $watches->monitorId($name, $status);
 
             if ($id !== null) {
@@ -279,9 +277,12 @@ class DashboardController
         return [
             'state' => $state,
             'headline' => $headline,
-            'summary' => $state === 'overdue'
-                ? 'Their state may be out of date. Is the scheduler running?'
-                : sprintf('%d %s · %d %s to run when needed', $counts['total'], Str::plural('watch', $counts['total']), $total, Str::plural('monitor', $total)),
+            'summary' => match (true) {
+                // When every late watch is failing to run, the scheduler is running them
+                $state === 'overdue' && $this->failingToRun($watches['watches']) => 'Their state may be out of date, as their runs are failing.',
+                $state === 'overdue' => 'Their state may be out of date. Is the scheduler running?',
+                default => sprintf('%d %s · %d %s to run when needed', $counts['total'], Str::plural('watch', $counts['total']), $total, Str::plural('monitor', $total)),
+            },
             'stats' => [
                 ['label' => 'Up', 'value' => (string) $counts['up']],
                 ['label' => 'Down', 'value' => (string) $counts['down'], 'alert' => $counts['down'] > 0],
@@ -442,6 +443,8 @@ class DashboardController
                 'next_run_at' => $schedule?->nextRunAt,
                 'overdue_since' => $schedule?->overdueSince,
                 'error' => $watch?->error,
+                // A run that stopped before checking, e.g. a misconfigured watch, which is why it would look overdue
+                'failed_run' => $watch?->failedRunAt === null ? null : ['at' => $watch->failedRunAt, 'error' => $watch->failedRunError],
                 // Only worth saying when the rating, rather than an error, is why the check didn't pass
                 'last_check' => $watch?->rating !== null && $watch->error === null && $watch->rating->isAtLeast(Rating::Degraded)
                     ? ['rating' => $watch->rating->label(), 'duration' => $watch->duration === null ? null : $this->duration($watch->duration)]
@@ -491,6 +494,18 @@ class DashboardController
         }
 
         return $links;
+    }
+
+    /**
+     * Whether every overdue watch has a failed run to explain it.
+     *
+     * @param list<array> $watches See summariseWatches()
+     */
+    protected function failingToRun(array $watches): bool
+    {
+        $overdue = array_filter($watches, fn (array $watch) => $watch['condition'] === 'overdue');
+
+        return $overdue !== [] && array_filter($overdue, fn (array $watch) => $watch['failed_run'] === null) === [];
     }
 
     protected function watchState(?WatchStatus $watch): string

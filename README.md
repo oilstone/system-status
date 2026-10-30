@@ -65,7 +65,7 @@ The ping outcome is cached per server for `ping.cache_seconds` (default 10) in `
 
 Access to `/status` is granted when any of these apply:
 
-- the request sends `status.token` (`SYSTEM_STATUS_TOKEN`) as a bearer token, an `X-Status-Token` header or a `?token=` parameter;
+- the request sends `status.token` (`SYSTEM_STATUS_TOKEN`) as a bearer token, an `X-Status-Token` header or a `?token=` parameter (any of them may match, so another `Authorization` header, e.g. a gateway's, doesn't get in the way);
 - the client IP matches `status.allowed_ips` (`SYSTEM_STATUS_ALLOWED_IPS`, comma separated, CIDR ranges allowed). This relies on `TrustProxies` trusting your load balancer;
 - the environment is listed in `status.public_environments` (default `local`).
 
@@ -77,7 +77,7 @@ Failed pings are logged as warnings with the failing monitors and their errors, 
 
 `/monitors/dashboard` is a page to open in a browser. It follows the system's light or dark theme and refreshes itself in place every `dashboard.refresh_seconds` (default 30, `0` to stop), skipping refreshes while the tab is hidden and saying so if a refresh fails.
 
-When [watches](#watches) are defined, they lead the page. The headline comes from their stored state ("Payments is down", "Search is overdue", "All watches up"), followed by counts of watches that are up, down and overdue, then each watch. The monitors are listed by category below, but the page **doesn't run them**, so opening it or leaving it open puts no load on your dependencies, and it stays fast during an outage. Use **Run now** on a monitor, **Run all**, or **Check now** on a watch, which runs the watch's monitor without changing the watch; **Check all** in the Watches header does that for every watch, running a monitor that several watches check once. Results stay on the page until the next run, through refreshes.
+When [watches](#watches) are defined, they lead the page. The headline comes from their stored state ("Payments is down", "Search is overdue", "All watches up"), followed by counts of watches that are up, down and overdue, then each watch. The monitors are listed by category below, but the page **doesn't run them**, so opening it or leaving it open puts no load on your dependencies, and it stays fast during an outage. Use **Run now** on a monitor, **Run all**, or **Check now** on a watch, which runs the watch's monitor without changing the watch; **Check all** in the Watches header does that for every watch, running a monitor that several watches check once. **Run all** and **Check all** send each monitor in a request of its own, a few at a time, so results arrive as each monitor answers and a slow one can't time the others out. Results stay on the page until the next run, through refreshes, and so do the buttons' running state.
 
 To keep monitors up to date, press **Live** in the Monitors header to run them all again at every refresh, or **Live** on a single monitor to follow just that one. Live runs use `dashboard.refresh_seconds` (every 30 seconds when refreshing is off), pause while the tab is hidden, and skip a monitor that is still running from any run: a live one, **Run now**, **Run all**, **Check now** or **Check all**. The URL records what is live (`?live=all`, or `?live=services.payments` for each monitor), so a screen left showing the dashboard can be bookmarked live.
 
@@ -134,7 +134,7 @@ A watch checks one monitor on a schedule and tracks whether it is up or down, so
 | `recoveries` | Consecutive passing checks before a down watch is up again (default 1) |
 | `fail_at` | The rating that counts as failed (default `failed`) |
 | `handler` | A class implementing `Contracts\WatchHandler`, built through the container |
-| `cron` | When to run the watch (default every minute) |
+| `cron` | When to run the watch (default every minute). A watch with an invalid expression is left out of the schedule and reported to your exception handler, so it can't stop the rest of your schedule or artisan commands; the dashboard shows "Invalid schedule" |
 
 Any other keys, like `fallback` above, are passed to the handler as its options. Watch names may contain letters, numbers, dots, dashes and underscores.
 
@@ -208,7 +208,9 @@ An override takes effect from the watch's next run, applies immediately without 
 
 Watches appear on the dashboard and under `watches` in the `/status` JSON, read from the store without running any checks: each watch's `state`, consecutive `failures` and `passes`, `forced` state and `forced_until`, `checked_at`, its `last_check` (the `rating`, `duration_ms` and any `error`, following `expose_errors`; null before the first check or after a forced run), and the id of the status `monitor` it checks, or null. They never affect the status's pass/fail or the ping.
 
-When the watches are scheduled, each also has a `schedule`: its `cron`, the `timezone` the scheduler reads it in (`app.schedule_timezone`, or `app.timezone`), `next_run_at`, and `overdue_since`, the run that should have followed the last one but more than five minutes later still hasn't. An overdue watch usually means `schedule:run` has stopped, so its state is out of date. Where you don't run the scheduler, such as on your own machine, set `watches.overdue_warnings` to false (`SYSTEM_STATUS_WATCH_OVERDUE_WARNINGS=false`) to stop flagging missed runs; schedules and next runs are still shown. The dashboard shows the schedule in words where it can ("Every 5 minutes", "Weekdays at 02:30 UTC"), when it runs next, and flags overdue watches.
+A watch also has a `failed_run`, or null: when a run last stopped before it could check, such as a watch whose monitor or handler can't be built, with its `at` time and `error` (following `expose_errors`). `system-status:watch` records it without changing the watch's state, and the next run that checks clears it.
+
+When the watches are scheduled, each also has a `schedule`: its `cron`, the `timezone` the scheduler reads it in (`app.schedule_timezone`, or `app.timezone`), `next_run_at`, and `overdue_since`, the run that should have followed the last one but more than five minutes later still hasn't. An overdue watch usually means `schedule:run` has stopped, so its state is out of date; when its runs are failing instead, the dashboard shows the `failed_run` error rather than asking about the scheduler. Where you don't run the scheduler, such as on your own machine, set `watches.overdue_warnings` to false (`SYSTEM_STATUS_WATCH_OVERDUE_WARNINGS=false`) to stop flagging missed runs; schedules and next runs are still shown. The dashboard shows the schedule in words where it can ("Every 5 minutes", "Weekdays at 02:30 UTC"), when it runs next, and flags overdue watches.
 
 ### Laravel monitor types
 

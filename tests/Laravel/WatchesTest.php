@@ -179,6 +179,44 @@ class WatchesTest extends TestCase
         $exceptions->shouldHaveReceived('report')->once()->with(Mockery::type(InvalidArgumentException::class));
     }
 
+    public function test_a_run_that_fails_before_checking_is_recorded_rather_than_looking_overdue(): void
+    {
+        // Search's definition broke in a deploy after its last check, so its runs stop before checking, without
+        // changing its state
+        $this->watches([
+            'payments' => ['monitor' => 'file', 'cron' => '*/5 * * * *'],
+            'search' => ['monitor' => ['type' => 'nope']],
+        ]);
+        $this->travelTo(Date::parse('2026-10-30 09:00:30'));
+        $this->store()->save('search', WatchState::Up, 0, 1, Date::now());
+        $this->store()->save('payments', WatchState::Up, 0, 1, Date::now());
+        $this->travelTo(Date::parse('2026-10-30 09:06:30'));
+        $this->artisan('system-status:watch search')->assertFailed();
+
+        $status = $this->store()->get('search');
+
+        $this->assertSame(WatchState::Up, $status->state);
+        $this->assertSame('2026-10-30T09:00:30+00:00', $status->checkedAt?->format(DATE_ATOM));
+        $this->assertSame('2026-10-30T09:06:30+00:00', $status->failedRunAt?->format(DATE_ATOM));
+        $this->assertSame('No monitor type named "nope" has been registered', $status->failedRunError);
+
+        $this->dashboard()
+            ->assertSeeInOrder(['Search is overdue', 'Their state may be out of date, as their runs are failing.'])
+            ->assertSeeInOrder(['id="watch-search"', 'Overdue since', 'Last run failed', 'No monitor type named &quot;nope&quot; has been registered'], false)
+            ->assertDontSee('Is the scheduler running?');
+
+        $this->getJson('/monitors/status?token=status-token')
+            ->assertJsonPath('watches.search.failed_run.at', '2026-10-30T09:06:30+00:00')
+            ->assertJsonPath('watches.search.failed_run.error', 'No monitor type named "nope" has been registered')
+            ->assertJsonPath('watches.payments.failed_run', null);
+
+        // A run that checks clears it
+        $this->store()->save('search', WatchState::Up, 0, 2, Date::now());
+
+        $this->assertNull($this->store()->get('search')->failedRunAt);
+        $this->dashboard()->assertDontSee('Last run failed');
+    }
+
     public function test_a_failing_handler_still_prints_the_outcome_and_fails(): void
     {
         $this->watches(['payments' => ['monitor' => ['type' => 'callback', 'callback' => fn () => false], 'handler' => RecordingWatchHandler::class, 'throw' => true]]);
@@ -381,14 +419,24 @@ class WatchesTest extends TestCase
         $this->assertSame([], $this->scheduled());
     }
 
-    public function test_an_invalid_cron_is_reported_when_scheduling(): void
+    public function test_a_watch_with_an_invalid_cron_is_reported_and_left_out_of_the_schedule(): void
     {
-        $this->watches(['payments' => ['monitor' => 'file', 'cron' => 'often']]);
+        $this->watches([
+            'payments' => ['monitor' => 'file', 'cron' => 'often'],
+            'search' => ['monitor' => 'file', 'cron' => '*/5 * * * *'],
+        ]);
 
-        $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage('The payments watch is misconfigured: cron must be a valid cron expression');
+        $exceptions = $this->spy(ExceptionHandler::class);
 
-        $this->scheduled();
+        // The rest of the app's schedule, and the other watches, still run
+        $scheduled = $this->scheduled();
+
+        $this->assertCount(1, $scheduled);
+        $this->assertStringContainsString("system-status:watch 'search'", (string) $scheduled[0]->command);
+        $exceptions->shouldHaveReceived('report')->once()->with(Mockery::on(
+            fn ($e) => $e instanceof InvalidArgumentException && $e->getMessage() === 'The payments watch is misconfigured: cron must be a valid cron expression',
+        ));
+        $this->dashboard()->assertSeeInOrder(['id="watch-payments"', 'Invalid schedule'], false);
     }
 
     public function test_the_status_shows_watches_without_running_them(): void
@@ -560,6 +608,7 @@ class WatchesTest extends TestCase
         $this->watches([
             'payments' => ['monitor' => 'services.payments', 'failures' => 2],
             'search' => ['monitor' => ['type' => 'callback', 'name' => 'Search index', 'callback' => fn () => static::$healthy]],
+            'broken' => ['monitor' => ['type' => 'file', 'path' => __FILE__], 'handler' => 'Nope'],
         ]);
 
         static::$healthy = false;
@@ -574,6 +623,11 @@ class WatchesTest extends TestCase
             ->assertOk()
             ->assertDontSee('data-monitor=', false)
             ->assertSeeInOrder(['data-check-for="watch:search"', 'failed', 'Search index returned false'], false);
+
+        // A misconfigured watch fails on its own row, as it does when every watch is checked
+        $this->get('/monitors/dashboard/run?watch=broken', ['X-Status-Token' => 'status-token'])
+            ->assertOk()
+            ->assertSeeInOrder(['data-check-for="watch:broken"', 'failed', 'handler must be the name of a class'], false);
 
         $this->assertNull($this->store()->get('payments')->checkedAt);
         $this->assertNull($this->store()->get('search')->checkedAt);

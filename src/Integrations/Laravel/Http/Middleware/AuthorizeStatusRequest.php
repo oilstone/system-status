@@ -31,10 +31,12 @@ class AuthorizeStatusRequest
         }
 
         $token = (string) ($settings['token'] ?? '');
-        $given = $request->bearerToken() ?? $request->header('X-Status-Token') ?? $request->query('token');
 
-        if ($token !== '' && is_string($given) && hash_equals($token, $given)) {
-            return true;
+        // Each way is tried, as a proxy or client may send its own Authorization header alongside the status token
+        foreach ([$request->bearerToken(), $request->header('X-Status-Token'), $request->query('token')] as $given) {
+            if ($token !== '' && is_string($given) && hash_equals($token, $given)) {
+                return true;
+            }
         }
 
         $allowedIps = $settings['allowed_ips'] ?? [];

@@ -36,6 +36,13 @@ class StatusEndpointTest extends TestCase
         $this->getJson('/monitors/status?token=status-token')->assertOk();
     }
 
+    public function test_another_bearer_token_does_not_hide_the_status_token(): void
+    {
+        $this->getJson('/monitors/status', ['Authorization' => 'Bearer gateway-token', 'X-Status-Token' => 'status-token'])->assertOk();
+        $this->getJson('/monitors/status?token=status-token', ['Authorization' => 'Bearer gateway-token'])->assertOk();
+        $this->getJson('/monitors/status', ['Authorization' => 'Bearer gateway-token'])->assertForbidden();
+    }
+
     public function test_an_empty_token_never_grants_access(): void
     {
         $this->rebootWith(['system-status.status.token' => '']);
