@@ -296,11 +296,14 @@ class DashboardController
         }
 
         $ran = array_filter($states);
+        $durations = array_map(fn (Result $result) => $result->duration, $results);
         $failing = count(array_keys($ran, 'failing', true));
         $degraded = count(array_keys($ran, 'degraded', true));
 
         return [
             'categories' => $categories,
+            // Each result's bar is scaled to the slowest, so lengths compare across rows
+            'slowest' => max([0.0, ...$durations]),
             'monitorSummary' => match (true) {
                 $failing > 0 => ['state' => 'failing', 'label' => $failing . ' failing'],
                 $degraded > 0 => ['state' => 'degraded', 'label' => $degraded . ' degraded'],
@@ -337,6 +340,7 @@ class DashboardController
             'rating' => $result->rating->label(),
             'rating_label' => ucfirst($result->rating->label()),
             'duration' => $this->duration($result->duration),
+            'duration_ms' => round($result->duration, 1),
             'error' => $result->error === null ? null : (($settings['expose_errors'] ?? true) ? $result->errorMessage() : 'Check failed'),
             'notes' => $result->notes,
             'meta' => array_map(

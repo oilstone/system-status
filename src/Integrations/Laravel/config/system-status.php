@@ -143,12 +143,17 @@ return [
     | or exit codes; failures are still reported to your exception
     | handler. Set it to false to run them one after another.
     |
+    | The dashboard and status flag a watch as overdue when a scheduled run
+    | is more than five minutes late. Turn overdue_warnings off where
+    | schedule:run isn't running, such as on your own machine.
+    |
     */
 
     'watches' => [
         'cache_store' => env('SYSTEM_STATUS_WATCH_CACHE_STORE'),
         'schedule' => true,
         'run_in_background' => env('SYSTEM_STATUS_WATCH_RUN_IN_BACKGROUND', true),
+        'overdue_warnings' => env('SYSTEM_STATUS_WATCH_OVERDUE_WARNINGS', true),
         'definitions' => [
             // 'payments' => [
             //     'monitor' => 'services.payments',

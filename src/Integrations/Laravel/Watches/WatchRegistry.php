@@ -36,12 +36,14 @@ class WatchRegistry
      * @param Closure(): WatchStore $store Resolved only when statuses are read
      * @param bool $scheduled Whether the watches are added to Laravel's scheduler
      * @param DateTimeZone|string|null $timezone The scheduler's timezone; the default timezone when null
+     * @param bool $overdueWarnings Whether to report missed runs; off where schedule:run isn't running, e.g. locally
      */
     public function __construct(
         protected array $definitions,
         protected Closure $store,
         protected bool $scheduled = true,
         DateTimeZone|string|null $timezone = null,
+        protected bool $overdueWarnings = true,
     ) {
         $this->timezone = $timezone instanceof DateTimeZone ? $timezone->getName() : ($timezone ?? date_default_timezone_get());
     }
@@ -115,7 +117,7 @@ class WatchRegistry
         $cron = new CronExpression($this->cron($name));
         $now = DateTimeImmutable::createFromInterface($now ?? Date::now());
         // The first run due after the last one started; a run that is still going, or holding up the next, isn't late
-        $missed = $status?->checkedAt === null
+        $missed = $status?->checkedAt === null || ! $this->overdueWarnings
             ? null
             : DateTimeImmutable::createFromMutable($cron->getNextRunDate($status->checkedAt, 0, false, $this->timezone));
 

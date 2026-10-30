@@ -81,6 +81,7 @@ class SystemStatusServiceProvider extends ServiceProvider
                 (bool) $config->get('system-status.watches.schedule', true),
                 // The timezone Laravel gives the schedule
                 $config->get('app.schedule_timezone') ?? $config->get('app.timezone'),
+                (bool) $config->get('system-status.watches.overdue_warnings', true),
             );
         });
 
