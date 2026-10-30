@@ -9,6 +9,8 @@ return [
     |
     | Monitor definitions grouped by category. Each definition is a type or
     | monitor class name, or an array of options with a "class" or "type".
+    | A monitor's id is "{category}.{key}"; give it a string key, such as
+    | 'payments' => [...], when a watch refers to it.
     |
     | Built-in types: database, cache, disk, queue, file, http, pdo,
     | oauth_token and callback. Register more with SystemStatus::extend().
@@ -24,6 +26,9 @@ return [
         // 'connections' => [
         //     ['type' => 'database', 'connection' => 'mysql'],
         //     ['type' => 'cache', 'store' => 'redis'],
+        // ],
+        // 'services' => [
+        //     'payments' => ['type' => 'http', 'url' => 'https://payments.example.com/health'],
         // ],
     ],
 
@@ -84,10 +89,13 @@ return [
     | Dashboard
     |--------------------------------------------------------------------------
     |
-    | The status as a page for people to open in a browser. It shows the
-    | same report as the status endpoint, with the same access rules,
-    | categories, fail_at and expose_errors, and the same query string
-    | options. It refreshes in place every refresh_seconds (0 to stop).
+    | Watches and monitors as a page for people to open in a browser, with
+    | the status endpoint's access rules, categories, fail_at and
+    | expose_errors, and the same query string options. When watches are
+    | defined the page leads with them and only runs monitors from its
+    | buttons, which can also keep monitors live; otherwise it checks every
+    | monitor as it loads. It refreshes in place every refresh_seconds (0
+    | to stop), which is also how often live monitors run (30 when 0).
     | Publish the system-status-views tag to customise it.
     |
     */
@@ -107,7 +115,8 @@ return [
     | down, so a handler can alert or fail over. Definitions are keyed by
     | watch name (letters, numbers, dots, dashes and underscores) and take:
     |
-    | - monitor: a monitor definition, as in the monitors section (required)
+    | - monitor: the id of a monitor in the monitors section, such as
+    |   'services.payments', or a definition as that section takes (required)
     | - failures: consecutive failed checks before it is down (default 1)
     | - recoveries: consecutive passing checks before it is up (default 1)
     | - fail_at: the rating that counts as failed (default 'failed')
@@ -142,7 +151,7 @@ return [
         'run_in_background' => env('SYSTEM_STATUS_WATCH_RUN_IN_BACKGROUND', true),
         'definitions' => [
             // 'payments' => [
-            //     'monitor' => ['type' => 'http', 'url' => 'https://payments.example.com/health'],
+            //     'monitor' => 'services.payments',
             //     'failures' => 3,
             //     'recoveries' => 2,
             //     'handler' => App\Watches\FailOverPayments::class,

@@ -9,9 +9,9 @@ use InvalidArgumentException;
 use Oilstone\SystemStatus\Exceptions\InvalidMonitorConfiguration;
 use Oilstone\SystemStatus\Exceptions\UnknownMonitorType;
 use Oilstone\SystemStatus\Exceptions\WatchHandlerFailed;
-use Oilstone\SystemStatus\MonitorFactory;
 use Oilstone\SystemStatus\Probe;
 use Oilstone\SystemStatus\Rating;
+use Oilstone\SystemStatus\SystemStatus;
 use Oilstone\SystemStatus\Tests\Fixtures\FakeMonitor;
 use Oilstone\SystemStatus\Tests\Fixtures\RecordingWatchHandler;
 use Oilstone\SystemStatus\Watch;
@@ -38,7 +38,7 @@ class WatcherTest extends TestCase
     {
         $this->cache = new Repository(new ArrayStore());
         $this->store = new WatchStore($this->cache);
-        $this->watcher = new Watcher(new MonitorFactory(), $this->store);
+        $this->watcher = new Watcher(new SystemStatus(), $this->store);
         RecordingWatchHandler::$calls = [];
     }
 
@@ -179,6 +179,20 @@ class WatcherTest extends TestCase
 
         $this->assertNull($this->store->get('payments')->rating);
         $this->assertNull($this->store->get('payments')->toArray()['last_check']);
+    }
+
+    public function test_a_watch_can_check_a_monitor_of_the_status(): void
+    {
+        $status = (new SystemStatus())->add(['class' => FakeMonitor::class, 'name' => 'Payments API', 'check' => function (Probe $probe) {
+            $probe->fail('Payments refused the connection');
+        }], 'services', 'payments');
+        $watcher = new Watcher($status, $this->store);
+
+        $outcome = $watcher->run(Watch::fromArray('payments', ['monitor' => 'services.payments']));
+
+        $this->assertSame('Payments API', $outcome->monitor->name());
+        $this->assertSame(WatchState::Down, $outcome->state);
+        $this->assertSame('Payments refused the connection', $this->store->get('payments')->error);
     }
 
     public function test_a_forced_state_applies_immediately_without_checking(): void

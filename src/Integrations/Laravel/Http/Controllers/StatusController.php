@@ -37,15 +37,15 @@ class StatusController
         $now = Date::now();
 
         // Read from the store as the watches last left them; they never affect the outcome
-        foreach ($watches->statuses() as $name => $status) {
+        foreach ($watches->statuses() as $name => $watch) {
             try {
-                $schedule = $watches->schedule($name, $status, $now)?->toArray();
+                $schedule = $watches->schedule($name, $watch, $now)?->toArray();
             } catch (Throwable) {
                 $schedule = null;
             }
 
-            $data['watches'][$name] = ($status?->toArray($exposeErrors) ?? ['error' => 'The watch state could not be read'])
-                + ['schedule' => $schedule];
+            $data['watches'][$name] = ($watch?->toArray($exposeErrors) ?? ['error' => 'The watch state could not be read'])
+                + ['monitor' => $watches->monitorId($name, $status), 'schedule' => $schedule];
         }
 
         return new JsonResponse(

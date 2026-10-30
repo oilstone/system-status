@@ -160,6 +160,93 @@ class DashboardTest extends TestCase
         $this->assertNotNull(Route::getRoutes()->getByName('system-status.status'));
     }
 
+    public function test_without_watches_the_monitors_run_as_the_page_loads(): void
+    {
+        $runs = 0;
+        $this->monitors(['connections' => [['type' => 'callback', 'name' => 'Search', 'callback' => function () use (&$runs) {
+            $runs++;
+        }]]]);
+
+        $this->dashboard()
+            ->assertSeeInOrder(['All systems operational', 'Monitors', 'All operational', 'Run all', 'Connections', 'Search', 'Optimal', 'Run now'])
+            ->assertDontSee('Not run');
+
+        $this->assertSame(1, $runs);
+
+        $this->rebootWith(['system-status.watches.definitions' => ['search' => ['monitor' => 'connections.0']]]);
+        $this->dashboard()->assertSee('Not run')->assertDontSee('Optimal');
+
+        $this->assertSame(1, $runs);
+    }
+
+    public function test_monitors_can_be_made_live_only_when_watches_lead(): void
+    {
+        // Without watches every monitor runs on each refresh, so there is nothing to make live
+        $this->dashboard()->assertDontSee('data-live-seconds="', false);
+
+        $this->rebootWith(['system-status.watches.definitions' => ['deployed' => ['monitor' => 'connections.0']]]);
+
+        $this->dashboard()
+            ->assertSee('data-live-seconds="30"', false)
+            ->assertSeeInOrder(['Monitors', 'data-live=""', 'Live', 'Run all', 'data-live="connections.0"', 'Live', 'Run now'], false);
+
+        $this->runFromDashboard('?monitor=connections.0')->assertSee('data-live="connections.0"', false);
+
+        // Live monitors keep the refresh interval, or run every 30 seconds when the page doesn't refresh
+        $this->rebootWith(['system-status.dashboard.refresh_seconds' => 10]);
+        $this->dashboard()->assertSee('data-live-seconds="10"', false);
+
+        $this->rebootWith(['system-status.dashboard.refresh_seconds' => 0]);
+        $this->dashboard()->assertSee('data-live-seconds="30"', false);
+    }
+
+    public function test_healthy_categories_start_closed(): void
+    {
+        $this->dashboard()
+            ->assertSee('<details class="card category" id="category-connections" data-section data-category >', false)
+            ->assertSee('<details class="card category" id="category-third_party_services" data-section data-category  open >', false);
+    }
+
+    public function test_monitors_can_be_run_one_at_a_time_or_all_together(): void
+    {
+        $this->runFromDashboard('?monitor=connections.0')
+            ->assertOk()
+            ->assertHeader('Content-Type', 'text/html; charset=UTF-8')
+            ->assertHeader('Referrer-Policy', 'no-referrer')
+            ->assertSeeInOrder(['data-monitor="connections.0"', 'data-state="operational"', 'Deployed', 'Optimal', 'Run now'], false)
+            ->assertSee('data-check-for="connections.0"', false)
+            ->assertDontSee('Payments API');
+
+        $this->runFromDashboard()
+            ->assertOk()
+            ->assertSeeInOrder(['data-monitor="connections.0"', 'data-monitor="third_party_services.0"', 'data-state="degraded"', 'Responding slowly', 'eu-west-1'], false);
+
+        $this->runFromDashboard('?categories=third_party_services&fail_at=degraded')
+            ->assertSee('data-state="failing"', false)
+            ->assertDontSee('Deployed');
+
+        $this->get('/monitors/dashboard/run?monitor=connections.0')->assertForbidden();
+    }
+
+    public function test_running_explains_bad_requests(): void
+    {
+        $this->runFromDashboard('?monitor=connections.9')
+            ->assertNotFound()
+            ->assertHeader('Content-Type', 'text/plain; charset=UTF-8')
+            ->assertSee('No monitor has the id "connections.9"', false);
+
+        $this->runFromDashboard('?monitor[]=connections.0')->assertStatus(422)->assertSee('monitor and watch must each name one monitor or watch');
+        $this->runFromDashboard('?categories=nope')->assertStatus(422)->assertSee('Unknown monitor categories: nope');
+    }
+
+    public function test_errors_in_run_results_can_be_hidden(): void
+    {
+        $this->monitors(['connections' => [['type' => 'callback', 'name' => 'Search', 'callback' => fn () => throw new RuntimeException('db.internal:5432 refused')]]]);
+        $this->rebootWith(['system-status.status.expose_errors' => false]);
+
+        $this->runFromDashboard()->assertSee('Check failed')->assertDontSee('db.internal');
+    }
+
     public function test_the_views_can_be_published(): void
     {
         $paths = ServiceProvider::pathsToPublish(SystemStatusServiceProvider::class, 'system-status-views');
@@ -172,5 +259,10 @@ class DashboardTest extends TestCase
     protected function dashboard(string $query = ''): TestResponse
     {
         return $this->get('/monitors/dashboard' . $query, ['X-Status-Token' => 'status-token']);
+    }
+
+    protected function runFromDashboard(string $query = ''): TestResponse
+    {
+        return $this->get('/monitors/dashboard/run' . $query, ['X-Status-Token' => 'status-token']);
     }
 }

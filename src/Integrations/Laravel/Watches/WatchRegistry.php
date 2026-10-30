@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Date;
 use InvalidArgumentException;
 use Oilstone\SystemStatus\Exceptions\InvalidMonitorConfiguration;
 use Oilstone\SystemStatus\Integrations\Laravel\Console\WatchCommand;
+use Oilstone\SystemStatus\SystemStatus;
 use Oilstone\SystemStatus\Watch;
 use Oilstone\SystemStatus\WatchStatus;
 use Oilstone\SystemStatus\WatchStore;
@@ -68,6 +69,20 @@ class WatchRegistry
         unset($definition['cron']);
 
         return Watch::fromArray($name, (array) $definition);
+    }
+
+    /**
+     * The id of the status monitor the watch checks, when its monitor names one rather than defining its own.
+     */
+    public function monitorId(string $name, SystemStatus $status): ?string
+    {
+        try {
+            $monitor = $this->get($name)->monitor;
+        } catch (InvalidArgumentException) {
+            return null;
+        }
+
+        return is_string($monitor) && $status->hasMonitor($monitor) ? $monitor : null;
     }
 
     /**

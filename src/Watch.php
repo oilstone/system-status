@@ -9,7 +9,8 @@ use Oilstone\SystemStatus\Exceptions\InvalidMonitorConfiguration;
  * A scheduled check of one monitor that tracks whether it is up or down.
  *
  * Options:
- * - monitor: a monitor definition array, or a type or monitor class name (required)
+ * - monitor: the id of a monitor added to the status ("{category}.{key}"), a monitor definition array,
+ *   or a type or monitor class name (required)
  * - failures: consecutive failed checks before the watch is down (default 1)
  * - recoveries: consecutive passing checks before a down watch is up again (default 1)
  * - fail_at: the rating that counts as failed (default failed)
@@ -22,7 +23,7 @@ final class Watch
     private const RESERVED = ['monitor', 'failures', 'recoveries', 'fail_at', 'handler'];
 
     /**
-     * @param array|string $monitor See MonitorFactory::make()
+     * @param array|string $monitor A monitor id, or see MonitorFactory::make()
      * @param class-string<WatchHandler>|null $handler
      */
     private function __construct(

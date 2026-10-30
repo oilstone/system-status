@@ -86,7 +86,7 @@ class SystemStatusServiceProvider extends ServiceProvider
 
         $this->app->singleton(Watcher::class, function (Container $app): Watcher {
             // Shares the status factory, so watches can use every registered monitor type
-            return new ContainerWatcher($app->make(SystemStatus::class)->factory(), $app->make(WatchStore::class), $app, $app->make('events'));
+            return new ContainerWatcher($app->make(SystemStatus::class), $app->make(WatchStore::class), $app, $app->make('events'));
         });
     }
 
@@ -148,13 +148,14 @@ class SystemStatusServiceProvider extends ServiceProvider
 
                 if ($config->get('system-status.dashboard.enabled', true)) {
                     // The dashboard shows the same report, so it is protected at least as well as the status
-                    Route::get('dashboard', DashboardController::class)
-                        ->middleware([
-                            AuthorizeStatusRequest::class,
-                            ...($settings['status_middleware'] ?? []),
-                            ...($settings['dashboard_middleware'] ?? []),
-                        ])
-                        ->name('system-status.dashboard');
+                    $middleware = [
+                        AuthorizeStatusRequest::class,
+                        ...($settings['status_middleware'] ?? []),
+                        ...($settings['dashboard_middleware'] ?? []),
+                    ];
+
+                    Route::get('dashboard', DashboardController::class)->middleware($middleware)->name('system-status.dashboard');
+                    Route::get('dashboard/run', [DashboardController::class, 'run'])->middleware($middleware)->name('system-status.dashboard.run');
                 }
             });
     }

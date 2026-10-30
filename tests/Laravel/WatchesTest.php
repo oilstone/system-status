@@ -468,7 +468,8 @@ class WatchesTest extends TestCase
         $this->monitors(['connections' => [['type' => 'file', 'path' => __FILE__, 'name' => 'Deployed']]]);
 
         $this->dashboard()
-            ->assertSeeInOrder(['Watches', '0 of 2 up', 'Payments', 'Not checked yet', 'Search', 'Not checked yet']);
+            ->assertSee('data-state="pending"', false)
+            ->assertSeeInOrder(['Watches haven’t run yet', '2 watches · 1 monitor to run when needed', 'Watches', '0 of 2 up', 'Payments', 'Not checked yet', 'Search', 'Not checked yet']);
 
         static::$healthy = false;
         $this->artisan('system-status:watch');
@@ -477,9 +478,13 @@ class WatchesTest extends TestCase
 
         $this->dashboard()
             ->assertOk()
-            ->assertSee('All systems operational')
+            ->assertSee('<title>Payments is down', false)
+            ->assertSee('data-state="down"', false)
             ->assertSee('data-watches', false)
+            ->assertSeeInOrder(['Payments is down', 'Up', '1', 'Down', '1', 'Overdue', '0', 'Last watch run'])
             ->assertSeeInOrder(['Watches', '1 down', 'Payments', 'Payments API returned false', '2 consecutive failures', 'Forced up', 'until cleared', 'Down', 'Search', '1 consecutive pass', 'Up'])
+            // The monitors wait to be run
+            ->assertSeeInOrder(['Monitors', '1 monitor', 'Run all', 'Connections', 'Deployed', 'Not run', 'Run now'])
             ->assertSee('data-time-ago', false);
 
         $this->artisan('system-status:force payments down --minutes=15');
@@ -496,14 +501,15 @@ class WatchesTest extends TestCase
 
         $this->dashboard()
             ->assertSeeInOrder(['All up', 'Payments', 'Every 5 minutes', 'next', '2026-10-30T09:05:00+00:00', 'Search', 'Every minute', 'next', '2026-10-30T09:01:00+00:00'], false)
-            ->assertDontSee('Overdue');
+            ->assertDontSee('Overdue since');
 
         // Search should have run at 09:01, more than five minutes ago; payments at 09:05, which isn't late yet
         $this->travelTo(Date::parse('2026-10-30 09:06:30'));
 
         $this->dashboard()
             ->assertOk()
-            ->assertSee('All systems operational')
+            ->assertSeeInOrder(['Search is overdue', 'Their state may be out of date'])
+            ->assertSee('data-state="overdue"', false)
             ->assertSeeInOrder(['1 overdue', 'Payments', 'Search', 'Overdue since', '2026-10-30T09:01:00+00:00', 'Is the scheduler running?'], false);
 
         $this->getJson('/monitors/status?token=status-token')
@@ -514,7 +520,67 @@ class WatchesTest extends TestCase
 
         $this->store()->save('search', WatchState::Up, 0, 2, Date::now());
 
-        $this->dashboard()->assertSee('All up')->assertDontSee('Overdue');
+        $this->dashboard()->assertSee('All watches up')->assertDontSee('Overdue since');
+    }
+
+    public function test_watches_can_check_a_status_monitor(): void
+    {
+        $this->monitors(['services' => [
+            'payments' => ['type' => 'callback', 'name' => 'Payments API', 'callback' => fn () => static::$healthy],
+            ['type' => 'file', 'path' => __FILE__, 'name' => 'Deployed'],
+        ]]);
+        $this->watches([
+            'payments' => ['monitor' => 'services.payments', 'failures' => 2],
+            'search' => ['monitor' => ['type' => 'file', 'path' => __FILE__, 'name' => 'Search index']],
+        ]);
+
+        static::$healthy = false;
+        $this->artisan('system-status:watch payments')->expectsOutputToContain('Payments API: failed');
+        $this->artisan('system-status:watch payments');
+
+        $this->assertSame(WatchState::Down, $this->store()->get('payments')->state);
+
+        $this->getJson('/monitors/status?token=status-token')
+            ->assertJsonPath('watches.payments.monitor', 'services.payments')
+            ->assertJsonPath('watches.search.monitor', null)
+            ->assertJsonPath('categories.services.0.name', 'Payments API');
+
+        // Each side links to the other, and the category with a down watch opens
+        $this->dashboard()
+            ->assertSeeInOrder(['id="watch-payments"', 'checks', 'href="#monitor-services.payments"', 'Services › Payments API'], false)
+            ->assertSeeInOrder(['id="category-services"', 'open', 'id="monitor-services.payments"', 'href="#watch-payments"', 'Watched by Payments', 'Down'], false)
+            ->assertSeeInOrder(['data-check-slot="services.payments"', 'data-check-slot="watch:search"'], false);
+    }
+
+    public function test_checking_a_watch_from_the_dashboard_runs_its_monitor_without_changing_it(): void
+    {
+        $this->monitors(['services' => [
+            'payments' => ['type' => 'callback', 'name' => 'Payments API', 'callback' => fn () => static::$healthy],
+        ]]);
+        $this->watches([
+            'payments' => ['monitor' => 'services.payments', 'failures' => 2],
+            'search' => ['monitor' => ['type' => 'callback', 'name' => 'Search index', 'callback' => fn () => static::$healthy]],
+        ]);
+
+        static::$healthy = false;
+
+        // A watch of a status monitor is checked as that monitor, so its row in the list is returned too
+        $this->get('/monitors/dashboard/run?watch=payments', ['X-Status-Token' => 'status-token'])
+            ->assertOk()
+            ->assertSeeInOrder(['data-monitor="services.payments"', 'Watched by Payments', 'Payments API returned false', 'Failed'], false)
+            ->assertSeeInOrder(['data-check-for="services.payments"', 'Checked', 'failed', 'Payments API returned false'], false);
+
+        $this->get('/monitors/dashboard/run?watch=search', ['X-Status-Token' => 'status-token'])
+            ->assertOk()
+            ->assertDontSee('data-monitor=', false)
+            ->assertSeeInOrder(['data-check-for="watch:search"', 'failed', 'Search index returned false'], false);
+
+        $this->assertNull($this->store()->get('payments')->checkedAt);
+        $this->assertNull($this->store()->get('search')->checkedAt);
+
+        $this->get('/monitors/dashboard/run?watch=nope', ['X-Status-Token' => 'status-token'])
+            ->assertNotFound()
+            ->assertSee('No watch named "nope" is defined', false);
     }
 
     public function test_the_dashboard_describes_schedules_in_the_schedulers_timezone(): void
