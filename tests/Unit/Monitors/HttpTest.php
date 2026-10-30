@@ -70,6 +70,13 @@ class HttpTest extends TestCase
         $this->assertSame('GET api.test/health failed: cURL error 7: Failed to connect (see curl.se/libcurl/c/libcurl-errors.html) for api.test/health', $message);
     }
 
+    public function test_malformed_urls_never_reveal_their_credentials(): void
+    {
+        $result = (new SystemStatus())->add(['type' => 'http', 'url' => 'https://user:password@api.test:99999/health?key=secret'])->check()->results()[0];
+
+        $this->assertSame('GET api.test:99999/health failed: Unable to parse URI: api.test:99999/health', $result->errorMessage());
+    }
+
     public function test_relative_urls_drop_their_query_strings_too(): void
     {
         $error = new ConnectException('Connection refused for http://api.test:8080/health?key=secret', new Request('GET', 'http://api.test:8080/health?key=secret'));

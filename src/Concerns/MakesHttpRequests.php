@@ -5,6 +5,7 @@ namespace Oilstone\SystemStatus\Concerns;
 use GuzzleHttp\Client;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
+use InvalidArgumentException;
 use JsonException;
 use Psr\Http\Message\ResponseInterface;
 use Throwable;
@@ -66,7 +67,8 @@ trait MakesHttpRequests
     {
         try {
             $response = $this->http()->request($method, $url, $options);
-        } catch (GuzzleException $e) {
+        } catch (GuzzleException|InvalidArgumentException $e) {
+            // Guzzle rejects a malformed URL with a plain InvalidArgumentException that repeats it in full
             $this->fail(sprintf('%s %s failed: %s', $method, $this->describeUrl($url), $this->redactUrls($e->getMessage())), $e);
         }
 
@@ -118,8 +120,8 @@ trait MakesHttpRequests
         $parts = parse_url($url);
 
         if (! isset($parts['host'])) {
-            // Relative to a base_uri option, or unparseable
-            return substr($url, 0, strcspn($url, '?#'));
+            // Relative to a base_uri option, or unparseable, which may still start with a scheme and credentials
+            return (string) preg_replace('~^(?:[a-z][a-z0-9+.-]*:)?//(?:[^/?#]*@)?~i', '', substr($url, 0, strcspn($url, '?#')));
         }
 
         return $parts['host'] . (isset($parts['port']) ? ':' . $parts['port'] : '') . ($parts['path'] ?? '');

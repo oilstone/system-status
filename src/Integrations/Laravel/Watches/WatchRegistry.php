@@ -88,7 +88,7 @@ class WatchRegistry
     }
 
     /**
-     * @throws InvalidMonitorConfiguration When the expression is invalid, which the scheduler can't recover from
+     * @throws InvalidMonitorConfiguration When the expression is invalid
      */
     public function cron(string $name): string
     {

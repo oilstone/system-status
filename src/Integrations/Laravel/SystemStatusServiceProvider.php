@@ -4,10 +4,12 @@ namespace Oilstone\SystemStatus\Integrations\Laravel;
 
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Container\Container;
+use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Contracts\Foundation\CachesRoutes;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
+use Oilstone\SystemStatus\Exceptions\InvalidMonitorConfiguration;
 use Oilstone\SystemStatus\Integrations\Laravel\Console\CheckCommand;
 use Oilstone\SystemStatus\Integrations\Laravel\Console\ForceCommand;
 use Oilstone\SystemStatus\Integrations\Laravel\Console\WatchCommand;
@@ -109,11 +111,21 @@ class SystemStatusServiceProvider extends ServiceProvider
             $occurrence = Date::now()->format('YmdHi');
 
             foreach ($watches->names() as $name) {
+                // The schedule is built for every artisan command in many apps, so one bad expression must not stop
+                // them, or the app's other scheduled tasks; the watch is left out, and the dashboard says why
+                try {
+                    $cron = $watches->cron($name);
+                } catch (InvalidMonitorConfiguration $e) {
+                    $this->app->make(ExceptionHandler::class)->report($e);
+
+                    continue;
+                }
+
                 // The command changes every minute, so the mutex is named after the watch instead. Overlaps are then
                 // prevented across minutes, and schedule:finish finds a background run that ends in a later minute.
                 // onOneServer() still applies per minute, as the scheduler appends the minute to this name.
                 $event = $schedule->command('system-status:watch', [$name, '--occurrence' => $occurrence])
-                    ->cron($watches->cron($name))
+                    ->cron($cron)
                     ->createMutexNameUsing('system-status:watch:' . $name)
                     ->onOneServer()
                     ->withoutOverlapping((int) ceil(WatchCommand::LOCK_SECONDS / 60));

@@ -11,9 +11,10 @@
      * @var string $runUrl Where the page runs monitors; see run.blade.php
      * @var string|null $error Why the request's query could not be used
      * @var array<string, string> $tones The colour of each state and rating
-     * @var list<array{name: string, anchor: string, label: string, state: string, condition: string, state_label: string, detail: string|null, forced: string|null, forced_until: \DateTimeImmutable|null, checked_at: \DateTimeImmutable|null, schedule: string, cron: string|null, next_run_at: \DateTimeImmutable|null, overdue_since: \DateTimeImmutable|null, error: string|null, last_check: array{rating: string, duration: string|null}|null, monitor: array{id: string, anchor: string, label: string}|null, check_query: string, check_slot: string}> $watches
+     * @var list<array{name: string, anchor: string, label: string, state: string, condition: string, state_label: string, detail: string|null, forced: string|null, forced_until: \DateTimeImmutable|null, checked_at: \DateTimeImmutable|null, schedule: string, cron: string|null, next_run_at: \DateTimeImmutable|null, overdue_since: \DateTimeImmutable|null, error: string|null, failed_run: array{at: \DateTimeImmutable, error: string|null}|null, last_check: array{rating: string, duration: string|null}|null, monitor: array{id: string, anchor: string, label: string}|null, check_query: string, check_slot: string}> $watches
      *     state is up, down, pending (never run) or unknown (unreadable); condition is the state, or overdue when an up or pending watch has missed a run;
-     *     error is the last check's, not yet hidden when errors aren't exposed; monitor is the status monitor the watch checks
+     *     error is the last check's, and failed_run the last run that stopped before checking, neither yet hidden when errors
+     *     aren't exposed; monitor is the status monitor the watch checks
      * @var array{state: string, label: string} $watchSummary up, down, overdue or unknown
      * @var bool $exposeErrors
      * @var array<string, array{label: string, anchor: string, monitors: list<array>, state: string|null, open: bool}> $categories See partials/monitor.blade.php for each monitor
@@ -464,7 +465,16 @@
                                     </p>
                                     @if ($watch['overdue_since'] !== null)
                                         <p class="check__note check__note--overdue">
-                                            Overdue since <time datetime="{{ $watch['overdue_since']->format(DATE_ATOM) }}" data-local-time>{{ $clock($watch['overdue_since']) }}</time>. Is the scheduler running?
+                                            Overdue since <time datetime="{{ $watch['overdue_since']->format(DATE_ATOM) }}" data-local-time>{{ $clock($watch['overdue_since']) }}</time>.
+                                            @if ($watch['failed_run'] === null)
+                                                Is the scheduler running?
+                                            @endif
+                                        </p>
+                                    @endif
+                                    @if ($watch['failed_run'] !== null)
+                                        <p class="check__error">
+                                            Last run failed <time datetime="{{ $watch['failed_run']['at']->format(DATE_ATOM) }}" data-local-time>{{ $clock($watch['failed_run']['at']) }}</time>:
+                                            {{ $exposeErrors ? $watch['failed_run']['error'] : 'Run failed' }}
                                         </p>
                                     @endif
                                     @if ($watch['error'] !== null)
@@ -564,9 +574,12 @@
         var missedLive = false;
         // Monitors re-run at every live tick: all of them, or those picked one by one. Kept in ?live= so a page can be bookmarked live
         var live = { all: false, ids: {} };
-        // Runs waiting for a response, counted by the monitor they run ("*" for all of them, "watch:name" for a watch's
-        // own monitor), so a live run doesn't start on a monitor that hasn't answered from any run yet
+        // Runs waiting for a response, counted by the monitor they run (its id, or "watch:name" for a watch's own
+        // monitor), so a live run doesn't start on a monitor that hasn't answered from any run yet
         var running = {};
+        // Runs the viewer asked for that are still going: the button's query and key, and the keys of the runs it made
+        var pressed = [];
+        var runsAtOnce = 4;
         // Sections the viewer has opened or closed, which refreshes and runs then leave alone
         var toggled = {};
         var states = ['operational', 'degraded', 'failing'];
@@ -704,9 +717,8 @@
             notice.hidden = false;
         }
 
-        // Run one monitor (monitor=), a watch's monitor (watch=), every watch's (watch=*) or every monitor (an empty
-        // query), and put the results in place
-        function runQuery(query, key) {
+        // Run one monitor (monitor=) or a watch's monitor (watch=), and put the results in place
+        function fetchRun(query) {
             var params = new URLSearchParams(window.location.search);
             var url = new URL(runUrl, window.location.href);
 
@@ -716,7 +728,6 @@
             });
 
             url.search = params.toString();
-            running[key] = (running[key] || 0) + 1;
 
             return fetch(url.toString(), { headers: { Accept: 'text/html' }, cache: 'no-store', credentials: 'same-origin' })
                 .then(function (response) {
@@ -748,61 +759,142 @@
                     showBars();
                     linkWatches();
                     showLive();
+                    showRunning();
                     showLocalTimes();
-                })
-                .then(function () {
-                    finished(key);
-                }, function (error) {
-                    finished(key);
-
-                    throw error;
                 });
         }
 
-        function finished(key) {
-            if (--running[key] <= 0) {
-                delete running[key];
+        // Make runs, each a [query, key] pair, a few at a time: each monitor has a request of its own, so a slow one
+        // neither holds up the others' results nor makes them all time out, without taking every PHP worker at once.
+        // Each counts as running from the start, so live runs don't start on monitors still queued.
+        function runQueries(runs) {
+            var queue = runs.slice();
+            var failed = null;
+            var workers = [];
+            var count = Math.min(runsAtOnce, queue.length);
+
+            queue.forEach(function (run) {
+                running[run[1]] = (running[run[1]] || 0) + 1;
+            });
+
+            function next() {
+                var run = queue.shift();
+
+                if (!run) {
+                    return Promise.resolve();
+                }
+
+                return fetchRun(run[0])
+                    .catch(function (error) {
+                        failed = error;
+                    })
+                    .then(function () {
+                        if (--running[run[1]] <= 0) {
+                            delete running[run[1]];
+                        }
+
+                        return next();
+                    });
             }
+
+            for (var i = 0; i < count; i++) {
+                workers.push(next());
+            }
+
+            return Promise.all(workers).then(function () {
+                if (failed) {
+                    throw failed;
+                }
+            });
         }
 
-        // Whether a run of these monitors would overlap one still waiting: all of them overlap every monitor, though
-        // not a watch's own monitor, and every watch's may include any monitor
-        function overlaps(key) {
-            return Object.keys(running).some(function (other) {
-                return other === key || other === '*' || other === 'watch:*' || (key === '*' && other.indexOf('watch:') !== 0);
+        function monitorRun(id) {
+            return [new URLSearchParams({ monitor: id }).toString(), id];
+        }
+
+        function monitorIds() {
+            return Array.prototype.map.call(document.querySelectorAll('[data-monitor]'), function (row) {
+                return row.getAttribute('data-monitor');
+            });
+        }
+
+        // The runs a button stands for: Run all is each monitor's, and Check all each watch's, once for a monitor that
+        // several watches check
+        function runsFor(button) {
+            var key = button.getAttribute('data-run-key');
+            var seen = {};
+
+            if (key === '*') {
+                return monitorIds().map(monitorRun);
+            }
+
+            if (key !== 'watch:*') {
+                return [[button.getAttribute('data-run'), key]];
+            }
+
+            return Array.prototype.map.call(document.querySelectorAll('[data-watch] [data-run]'), function (check) {
+                return [check.getAttribute('data-run'), check.getAttribute('data-run-key')];
+            }).filter(function (run) {
+                return seen[run[1]] ? false : (seen[run[1]] = true);
+            });
+        }
+
+        // Mark what the viewer's runs cover: their buttons are disabled, the one pressed says it is running, and their
+        // rows show it. Set again whenever refreshes or results replace rows, which bring buttons of their own.
+        function showRunning() {
+            var keys = {};
+
+            pressed.forEach(function (run) {
+                run.keys.concat(run.key).forEach(function (key) {
+                    keys[key] = true;
+                });
+            });
+
+            document.querySelectorAll('[data-run]').forEach(function (button) {
+                var key = button.getAttribute('data-run-key');
+                var mine = pressed.some(function (run) {
+                    return run.key === key && run.query === button.getAttribute('data-run');
+                });
+
+                if (!button.hasAttribute('data-label')) {
+                    button.setAttribute('data-label', button.textContent);
+                }
+
+                button.disabled = keys[key] === true;
+                button.textContent = mine ? 'Running…' : button.getAttribute('data-label');
+            });
+
+            document.querySelectorAll('[data-monitor]').forEach(function (row) {
+                row.classList.toggle('is-running', keys[row.getAttribute('data-monitor')] === true);
+            });
+
+            document.querySelectorAll('[data-watch]').forEach(function (row) {
+                var check = row.querySelector('[data-run]');
+
+                row.classList.toggle('is-running', check !== null && keys[check.getAttribute('data-run-key')] === true);
             });
         }
 
         function run(button) {
-            var query = button.getAttribute('data-run');
-            var key = button.getAttribute('data-run-key');
-            var all = query === '';
-            var watches = key === 'watch:*';
-            var scope = watches ? button.closest('section') : document;
-            var buttons = all || watches ? Array.prototype.slice.call(scope.querySelectorAll('[data-run]')) : [button];
-            var rows = all || watches ? Array.prototype.slice.call(scope.querySelectorAll(all ? '[data-monitor]' : '[data-watch]')) : [button.closest('.check')];
-            var label = button.textContent;
+            var runs = runsFor(button);
+            var entry = {
+                query: button.getAttribute('data-run'),
+                key: button.getAttribute('data-run-key'),
+                keys: runs.map(function (run) { return run[1]; }),
+            };
 
-            buttons.forEach(function (element) { element.disabled = true; });
-            rows.forEach(function (row) { row.classList.add('is-running'); });
-            button.textContent = 'Running…';
+            pressed.push(entry);
+            showRunning();
 
             // Runs asked for are always made; only live runs give way to ones still waiting
-            runQuery(query, key)
+            runQueries(runs)
                 .catch(function (error) {
                     showNotice('Couldn’t run the check: ' + error.message);
                 })
                 .then(function () {
-                    // Rows that were replaced brought their own buttons
-                    buttons.forEach(function (element) { element.disabled = false; });
-                    rows.forEach(function (row) { row.classList.remove('is-running'); });
-                    button.textContent = label;
+                    pressed.splice(pressed.indexOf(entry), 1);
+                    showRunning();
                 });
-        }
-
-        // A live run's query and the monitors it runs
-        function liveRun(id) {
-            return id === '*' ? ['', '*'] : [new URLSearchParams({ monitor: id }).toString(), id];
         }
 
         // Run the live monitors, skipping any still waiting for a run, quietly so rows don't flicker
@@ -813,12 +905,12 @@
                 return;
             }
 
-            (ids || (live.all ? ['*'] : Object.keys(live.ids))).map(liveRun).forEach(function (run) {
-                if (!overlaps(run[1])) {
-                    runQuery(run[0], run[1]).catch(function (error) {
-                        showNotice('Couldn’t run a live check at ' + new Date().toLocaleTimeString() + ': ' + error.message);
-                    });
-                }
+            var runs = (ids || (live.all ? monitorIds() : Object.keys(live.ids))).filter(function (id) {
+                return !running[id];
+            }).map(monitorRun);
+
+            runQueries(runs).catch(function (error) {
+                showNotice('Couldn’t run a live check at ' + new Date().toLocaleTimeString() + ': ' + error.message);
             });
         }
 
@@ -855,7 +947,7 @@
             showLive();
 
             if (on) {
-                runLive([id === '' ? '*' : id]);
+                runLive(id === '' ? null : [id]);
             }
         }
 
@@ -899,11 +991,12 @@
                             }
                         });
 
+                        // Watches of the same monitor share a slot and its result, so it goes back into each of them
                         current.querySelectorAll('[data-check-slot]').forEach(function (slot) {
-                            var target = find('data-check-slot', slot.getAttribute('data-check-slot'), region)[0];
-
-                            if (target && slot.innerHTML.trim() !== '') {
-                                target.innerHTML = slot.innerHTML;
+                            if (slot.innerHTML.trim() !== '') {
+                                find('data-check-slot', slot.getAttribute('data-check-slot'), region).forEach(function (target) {
+                                    target.innerHTML = slot.innerHTML;
+                                });
                             }
                         });
 
@@ -922,6 +1015,8 @@
                     showBars();
                     linkWatches();
                     showLive();
+                    // The watches came back with buttons of their own, which runs still going must disable again
+                    showRunning();
                     showCheckedAt();
                     showLocalTimes();
                 })

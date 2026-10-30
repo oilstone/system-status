@@ -13,9 +13,11 @@ use Oilstone\SystemStatus\Watch;
 use Oilstone\SystemStatus\Watcher;
 use Oilstone\SystemStatus\WatchOutcome;
 use Oilstone\SystemStatus\WatchStore;
+use Throwable;
 
 /**
- * Builds handlers through the container, and dispatches an event when a watch goes down or recovers.
+ * Builds handlers through the container, and dispatches an event when a watch goes down or recovers. A listener
+ * that throws is rethrown as WatchEventFailed, as the run had already saved its state.
  */
 class ContainerWatcher extends Watcher
 {
@@ -34,7 +36,7 @@ class ContainerWatcher extends Watcher
             $outcome = parent::run($watch);
         } catch (WatchHandlerFailed $e) {
             // The state was saved, so the transition happened whatever the handler did
-            $this->dispatch($e->outcome);
+            $this->dispatch($e->outcome, $e);
 
             throw $e;
         }
@@ -49,12 +51,27 @@ class ContainerWatcher extends Watcher
         return $this->container->make($class);
     }
 
-    protected function dispatch(WatchOutcome $outcome): void
+    /**
+     * @param WatchHandlerFailed|null $handlerFailure The handler's failure on this run, kept if a listener fails too
+     *
+     * @throws WatchEventFailed When a listener throws, which, like a handler failing, leaves the saved state standing
+     */
+    protected function dispatch(WatchOutcome $outcome, ?WatchHandlerFailed $handlerFailure = null): void
     {
-        if ($outcome->wentDown()) {
-            $this->events->dispatch(new MonitorWentDown($outcome));
-        } elseif ($outcome->recovered()) {
-            $this->events->dispatch(new MonitorRecovered($outcome));
+        $event = match (true) {
+            $outcome->wentDown() => new MonitorWentDown($outcome),
+            $outcome->recovered() => new MonitorRecovered($outcome),
+            default => null,
+        };
+
+        if ($event === null) {
+            return;
+        }
+
+        try {
+            $this->events->dispatch($event);
+        } catch (Throwable $e) {
+            throw new WatchEventFailed($outcome, $event::class, $e, $handlerFailure);
         }
     }
 }
