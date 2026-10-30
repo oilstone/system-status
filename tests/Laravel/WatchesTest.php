@@ -583,6 +583,24 @@ class WatchesTest extends TestCase
             ->assertSee('No watch named "nope" is defined', false);
     }
 
+    public function test_overdue_warnings_can_be_turned_off(): void
+    {
+        $this->rebootWith(['system-status.watches.overdue_warnings' => false]);
+        $this->travelTo(Date::parse('2026-10-30 09:00:30'));
+        $this->store()->save('payments', WatchState::Up, 0, 1, Date::now());
+        $this->store()->save('search', WatchState::Up, 0, 1, Date::now());
+        $this->travelTo(Date::parse('2026-10-30 10:00:00'));
+
+        $this->dashboard()
+            ->assertSee('All watches up', false)
+            ->assertSeeInOrder(['Search', 'Every minute', 'next', '2026-10-30T10:01:00+00:00'], false)
+            ->assertDontSee('Overdue since');
+
+        $this->getJson('/monitors/status?token=status-token')
+            ->assertJsonPath('watches.search.schedule.overdue_since', null)
+            ->assertJsonPath('watches.search.schedule.next_run_at', '2026-10-30T10:01:00+00:00');
+    }
+
     public function test_the_dashboard_describes_schedules_in_the_schedulers_timezone(): void
     {
         $this->travelTo(Date::parse('2026-10-30 09:00:30'));

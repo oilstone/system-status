@@ -202,6 +202,27 @@ class DashboardTest extends TestCase
         $this->dashboard()->assertSee('data-live-seconds="30"', false);
     }
 
+    public function test_each_result_has_a_bar_scaled_to_the_slowest(): void
+    {
+        $this->monitors(['connections' => [
+            ['type' => 'callback', 'name' => 'Fast', 'callback' => fn () => true],
+            ['type' => 'callback', 'name' => 'Slow', 'callback' => fn () => usleep(20000)],
+        ]]);
+
+        $html = $this->dashboard()->assertSee('data-duration="', false)->getContent();
+
+        $this->assertSame(2, substr_count($html, '<span class="bar" aria-hidden="true">'));
+        $this->assertMatchesRegularExpression('/Fast.*?width: \d%.*?Slow.*?width: 100%/s', $html);
+
+        // Results run on demand arrive one at a time, so the page scales them
+        $this->rebootWith(['system-status.watches.definitions' => ['fast' => ['monitor' => 'connections.0']]]);
+
+        $this->dashboard()->assertDontSee('<span class="bar"', false);
+        $this->runFromDashboard('?monitor=connections.1')
+            ->assertSee('data-duration="', false)
+            ->assertSee('<span class="bar" aria-hidden="true"><span style="width: 0%"></span></span>', false);
+    }
+
     public function test_healthy_categories_start_closed(): void
     {
         $this->dashboard()

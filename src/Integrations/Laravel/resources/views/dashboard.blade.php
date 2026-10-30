@@ -18,6 +18,7 @@
      * @var bool $exposeErrors
      * @var array<string, array{label: string, anchor: string, monitors: list<array>, state: string|null, open: bool}> $categories See partials/monitor.blade.php for each monitor
      * @var array{state: string, label: string} $monitorSummary operational, degraded, failing or empty
+     * @var float $slowest Milliseconds taken by the slowest result on the page; 0 before any monitor has run
      */
     $colours = ['green' => '#12b76a', 'teal' => '#15b79e', 'amber' => '#f79009', 'red' => '#f04438', 'grey' => '#98a2b3'];
     $stateLabels = ['operational' => 'Operational', 'degraded' => 'Degraded', 'failing' => 'Failing'];
@@ -43,6 +44,7 @@
             --divider: #f0f2f5;
             --text: #101828;
             --muted: #667085;
+            --track: #eaecf0;
             --shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 4px 16px rgba(16, 24, 40, .04);
             --green: #12b76a; --green-soft: #ecfdf3; --green-ink: #027a48;
             --teal: #15b79e; --teal-soft: #f0fdf9; --teal-ink: #107569;
@@ -61,6 +63,7 @@
                 --divider: #1f2532;
                 --text: #f5f5f6;
                 --muted: #94969c;
+                --track: #262d3b;
                 --shadow: 0 1px 2px rgba(0, 0, 0, .3);
                 --green-soft: rgba(18, 183, 106, .14); --green-ink: #47cd89;
                 --teal-soft: rgba(21, 183, 158, .14); --teal-ink: #2ed3b7;
@@ -215,10 +218,9 @@
 
         .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--tone); }
 
+        /* Inline text rather than flex, so a long chip wraps as one line of text */
         .chip {
-            display: inline-flex;
-            gap: 6px;
-            align-items: center;
+            display: inline-block;
             margin: 6px 6px 0 0;
             padding: 1px 9px;
             border: 1px solid color-mix(in srgb, var(--tone) 35%, var(--border));
@@ -229,7 +231,7 @@
             text-decoration: none;
         }
 
-        .chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--tone); }
+        .chip::before { content: ""; display: inline-block; width: 6px; height: 6px; margin: 0 6px 1px 0; border-radius: 50%; background: var(--tone); vertical-align: middle; }
         .chip:hover { background: var(--tone-soft); }
 
         .button {
@@ -317,17 +319,20 @@
         .check__meta dt { padding: 0 6px; background: var(--divider); color: var(--muted); }
         .check__meta dd { margin: 0; padding: 0 6px; overflow-wrap: anywhere; }
 
-        /* Two columns: the rating or state and its timing, then when it ran and the button to run it */
+        /* Two columns: the rating or state and its timing, the bar, then when it ran and the buttons to run it */
         .check__timing {
             display: grid;
-            grid-template-columns: auto auto;
+            grid-template-columns: minmax(0, 1fr) auto;
             gap: 8px 10px;
             align-items: center;
-            justify-content: end;
             justify-items: end;
-            min-width: 150px;
+            width: 224px;
             padding-top: 1px;
         }
+
+        /* Every bar shares a width and is scaled to the slowest result on the page, so lengths compare across rows */
+        .bar { grid-column: 1 / -1; justify-self: stretch; height: 4px; border-radius: 4px; background: var(--track); overflow: hidden; }
+        .bar span { display: block; height: 100%; border-radius: inherit; background: var(--tone); transition: width .3s; }
 
         .check__timing .button, .check__actions { grid-column: 2; }
         .check__actions { display: inline-flex; gap: 6px; }
@@ -378,7 +383,8 @@
             .stat dd { font-size: 18px; }
             .category__header { flex-wrap: wrap; row-gap: 4px; padding: 12px 16px; }
             .check { grid-template-columns: auto minmax(0, 1fr); }
-            .check__timing { grid-column: 2; display: flex; flex-wrap: wrap; justify-content: flex-start; min-width: 0; margin-top: 6px; }
+            .check__timing { grid-column: 2; display: flex; flex-wrap: wrap; justify-content: flex-start; width: auto; margin-top: 6px; }
+            .bar { flex: 1 0 100%; }
         }
     </style>
 </head>
@@ -661,6 +667,25 @@
             }
         }
 
+        // Bars are scaled to the slowest result on the page, which changes as on-demand runs come in
+        function showBars() {
+            var rows = document.querySelectorAll('[data-monitor][data-duration]');
+            var slowest = 0;
+
+            rows.forEach(function (row) {
+                slowest = Math.max(slowest, parseFloat(row.getAttribute('data-duration')) || 0);
+            });
+
+            rows.forEach(function (row) {
+                var bar = row.querySelector('.bar span');
+                var duration = parseFloat(row.getAttribute('data-duration')) || 0;
+
+                if (bar) {
+                    bar.style.width = (slowest > 0 ? Math.max(2, Math.round(duration / slowest * 100)) : 0) + '%';
+                }
+            });
+        }
+
         // Monitors kept across refreshes still show the current state of the watches that check them
         function linkWatches() {
             document.querySelectorAll('[data-watch-chip]').forEach(function (chip) {
@@ -718,6 +743,7 @@
 
                     notice.hidden = true;
                     summariseMonitors();
+                    showBars();
                     linkWatches();
                     showLive();
                     showLocalTimes();
@@ -888,6 +914,7 @@
 
                     notice.hidden = true;
                     summariseMonitors();
+                    showBars();
                     linkWatches();
                     showLive();
                     showCheckedAt();

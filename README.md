@@ -83,6 +83,8 @@ To keep monitors up to date, press **Live** in the Monitors header to run them a
 
 Without watches, the page checks every monitor as it loads, and the headline comes from that report, as the `/status` JSON does. **Run all** then checks them again by refreshing the page, so the headline always matches the results; there are no per-monitor or live buttons, since everything runs at each refresh.
 
+Each result has a bar showing its response time against the slowest result on the page, so slow monitors stand out; the bars rescale as results come in.
+
 Each category of monitors can be opened or closed. A category starts closed unless it has a problem: a failing or degraded result, or a watch of one of its monitors that is down. Sections stay as you leave them when the page refreshes. A watch that [names a status monitor](#watches) links to that monitor's row, and the row shows which watches check it and their state.
 
 It uses the same access rules as `/status`, so open it with `?token=` or from an allowed IP. It also honours the same `categories`, `fail_at` and `expose_errors` settings and query parameters, e.g. `/monitors/dashboard?token=…&categories=services`. Pages are sent with `Referrer-Policy: no-referrer` and `noindex`, so a token in the URL isn't leaked to other sites or search engines.
@@ -111,6 +113,7 @@ A watch checks one monitor on a schedule and tracks whether it is up or down, so
     'cache_store' => env('SYSTEM_STATUS_WATCH_CACHE_STORE'),
     'schedule' => true,
     'run_in_background' => env('SYSTEM_STATUS_WATCH_RUN_IN_BACKGROUND', true),
+    'overdue_warnings' => env('SYSTEM_STATUS_WATCH_OVERDUE_WARNINGS', true),
     'definitions' => [
         'payments' => [
             'monitor' => ['type' => 'http', 'url' => 'https://payments.example.com/health'],
@@ -205,7 +208,7 @@ An override takes effect from the watch's next run, applies immediately without 
 
 Watches appear on the dashboard and under `watches` in the `/status` JSON, read from the store without running any checks: each watch's `state`, consecutive `failures` and `passes`, `forced` state and `forced_until`, `checked_at`, its `last_check` (the `rating`, `duration_ms` and any `error`, following `expose_errors`; null before the first check or after a forced run), and the id of the status `monitor` it checks, or null. They never affect the status's pass/fail or the ping.
 
-When the watches are scheduled, each also has a `schedule`: its `cron`, the `timezone` the scheduler reads it in (`app.schedule_timezone`, or `app.timezone`), `next_run_at`, and `overdue_since`, the run that should have followed the last one but more than five minutes later still hasn't. An overdue watch usually means `schedule:run` has stopped, so its state is out of date. The dashboard shows the schedule in words where it can ("Every 5 minutes", "Weekdays at 02:30 UTC"), when it runs next, and flags overdue watches.
+When the watches are scheduled, each also has a `schedule`: its `cron`, the `timezone` the scheduler reads it in (`app.schedule_timezone`, or `app.timezone`), `next_run_at`, and `overdue_since`, the run that should have followed the last one but more than five minutes later still hasn't. An overdue watch usually means `schedule:run` has stopped, so its state is out of date. Where you don't run the scheduler, such as on your own machine, set `watches.overdue_warnings` to false (`SYSTEM_STATUS_WATCH_OVERDUE_WARNINGS=false`) to stop flagging missed runs; schedules and next runs are still shown. The dashboard shows the schedule in words where it can ("Every 5 minutes", "Weekdays at 02:30 UTC"), when it runs next, and flags overdue watches.
 
 ### Laravel monitor types
 
