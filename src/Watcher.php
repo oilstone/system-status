@@ -50,7 +50,7 @@ class Watcher
             default => $current->state,
         };
 
-        $this->store->save($watch->name, $state, $failures, $passes, $checkedAt);
+        $this->store->save($watch->name, $state, $failures, $passes, $checkedAt, $result);
 
         $outcome = new WatchOutcome($watch->name, $monitor, $state, $current->state, $forced, $result, $failures, $passes, $checkedAt);
 

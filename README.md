@@ -174,7 +174,9 @@ php artisan system-status:force payments clear
 
 An override takes effect from the watch's next run, applies immediately without waiting for the thresholds, and lasts until cleared or for `--minutes`.
 
-Watches appear on the dashboard and under `watches` in the `/status` JSON, read from the store without running any checks: each watch's `state`, consecutive `failures` and `passes`, `forced` state and `forced_until`, and `checked_at`. They never affect the status's pass/fail or the ping.
+Watches appear on the dashboard and under `watches` in the `/status` JSON, read from the store without running any checks: each watch's `state`, consecutive `failures` and `passes`, `forced` state and `forced_until`, `checked_at`, and its `last_check` (the `rating`, `duration_ms` and any `error`, following `expose_errors`; null before the first check or after a forced run). They never affect the status's pass/fail or the ping.
+
+When the watches are scheduled, each also has a `schedule`: its `cron`, the `timezone` the scheduler reads it in (`app.schedule_timezone`, or `app.timezone`), `next_run_at`, and `overdue_since`, the run that should have followed the last one but more than five minutes later still hasn't. An overdue watch usually means `schedule:run` has stopped, so its state is out of date. The dashboard shows the schedule in words where it can ("Every 5 minutes", "Weekdays at 02:30 UTC"), when it runs next, and flags overdue watches.
 
 ### Laravel monitor types
 
@@ -324,7 +326,7 @@ $store->force('payments', WatchState::Down, seconds: 1800);
 $store->clear('payments');
 ```
 
-`Watcher::run()` throws when the monitor or handler can't be built (changing nothing), and throws `WatchHandlerFailed`, carrying the `outcome`, when the handler throws after the state was saved. Run each watch from one process at a time.
+`Watcher::run()` throws when the monitor or handler can't be built (changing nothing), and throws `WatchHandlerFailed`, carrying the `outcome`, when the handler throws after the state was saved. Run each watch from one process at a time. `$store->get('payments')` returns the stored `WatchStatus`, including the last check's `rating`, `duration` and `error`.
 
 ## Upgrading from 1.x
 

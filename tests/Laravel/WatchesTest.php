@@ -414,6 +414,22 @@ class WatchesTest extends TestCase
         $this->assertIsString($response->json('watches.payments.checked_at'));
         $this->assertIsString($response->json('watches.payments.forced_until'));
         $this->assertCount(2, RecordingWatchHandler::$calls);
+
+        $response
+            ->assertJsonPath('watches.payments.last_check.rating', 'failed')
+            ->assertJsonPath('watches.payments.last_check.error', 'Payments API returned false')
+            ->assertJsonPath('watches.payments.schedule.cron', '*/5 * * * *')
+            ->assertJsonPath('watches.payments.schedule.timezone', 'UTC')
+            ->assertJsonPath('watches.payments.schedule.overdue_since', null)
+            ->assertJsonPath('watches.search.last_check', null)
+            ->assertJsonPath('watches.search.schedule.cron', '* * * * *');
+
+        $this->assertIsString($response->json('watches.payments.schedule.next_run_at'));
+
+        $this->rebootWith(['system-status.status.expose_errors' => false]);
+        $this->artisan('system-status:watch payments');
+
+        $this->getJson('/monitors/status?token=status-token')->assertJsonPath('watches.payments.last_check.error', 'Check failed');
     }
 
     public function test_watches_never_affect_the_ping(): void
@@ -463,11 +479,81 @@ class WatchesTest extends TestCase
             ->assertOk()
             ->assertSee('All systems operational')
             ->assertSee('data-watches', false)
-            ->assertSeeInOrder(['Watches', '1 down', 'Payments', '2 consecutive failures', 'Forced up', 'until cleared', 'Down', 'Search', '1 consecutive pass', 'Up']);
+            ->assertSeeInOrder(['Watches', '1 down', 'Payments', 'Payments API returned false', '2 consecutive failures', 'Forced up', 'until cleared', 'Down', 'Search', '1 consecutive pass', 'Up'])
+            ->assertSee('data-time-ago', false);
 
         $this->artisan('system-status:force payments down --minutes=15');
 
         $this->dashboard()->assertSeeInOrder(['Forced down', 'until', 'data-local-time'], false);
+    }
+
+    public function test_the_dashboard_shows_when_watches_run_and_flags_missed_runs(): void
+    {
+        $this->monitors(['connections' => [['type' => 'file', 'path' => __FILE__, 'name' => 'Deployed']]]);
+        $this->travelTo(Date::parse('2026-10-30 09:00:30'));
+        $this->store()->save('payments', WatchState::Up, 0, 1, Date::now());
+        $this->store()->save('search', WatchState::Up, 0, 1, Date::now());
+
+        $this->dashboard()
+            ->assertSeeInOrder(['All up', 'Payments', 'Every 5 minutes', 'next', '2026-10-30T09:05:00+00:00', 'Search', 'Every minute', 'next', '2026-10-30T09:01:00+00:00'], false)
+            ->assertDontSee('Overdue');
+
+        // Search should have run at 09:01, more than five minutes ago; payments at 09:05, which isn't late yet
+        $this->travelTo(Date::parse('2026-10-30 09:06:30'));
+
+        $this->dashboard()
+            ->assertOk()
+            ->assertSee('All systems operational')
+            ->assertSeeInOrder(['1 overdue', 'Payments', 'Search', 'Overdue since', '2026-10-30T09:01:00+00:00', 'Is the scheduler running?'], false);
+
+        $this->getJson('/monitors/status?token=status-token')
+            ->assertOk()
+            ->assertJsonPath('watches.search.schedule.overdue_since', '2026-10-30T09:01:00+00:00')
+            ->assertJsonPath('watches.payments.schedule.overdue_since', null)
+            ->assertJsonPath('watches.payments.schedule.next_run_at', '2026-10-30T09:10:00+00:00');
+
+        $this->store()->save('search', WatchState::Up, 0, 2, Date::now());
+
+        $this->dashboard()->assertSee('All up')->assertDontSee('Overdue');
+    }
+
+    public function test_the_dashboard_describes_schedules_in_the_schedulers_timezone(): void
+    {
+        $this->travelTo(Date::parse('2026-10-30 09:00:30'));
+        $this->rebootWith(['app.schedule_timezone' => 'America/New_York']);
+        $this->watches([
+            'hourly' => ['monitor' => 'file', 'cron' => '0 * * * *'],
+            'quarter-past' => ['monitor' => 'file', 'cron' => '15 * * * *'],
+            'nightly' => ['monitor' => 'file', 'cron' => '@daily'],
+            'weekdays' => ['monitor' => 'file', 'cron' => '30 2 * * 1-5'],
+            'mondays' => ['monitor' => 'file', 'cron' => '0 9 * * 1'],
+            'every-other-hour' => ['monitor' => 'file', 'cron' => '15 */2 * * *'],
+            'monthly' => ['monitor' => 'file', 'cron' => '0 0 1 * *'],
+            'broken' => ['monitor' => 'file', 'cron' => 'whenever'],
+        ]);
+
+        $this->dashboard()
+            ->assertOk()
+            ->assertSeeInOrder([
+                'Hourly', 'Every hour',
+                'Quarter Past', 'Every hour at :15',
+                'Nightly', 'Daily at 00:00 America/New_York', '2026-10-31T00:00:00-04:00',
+                'Weekdays', 'Weekdays at 02:30 America/New_York',
+                'Mondays', 'Mondays at 09:00 America/New_York',
+                'Every Other Hour', '15 */2 * * *',
+                'Monthly', '0 0 1 * *',
+                'Broken', 'Invalid schedule',
+            ], false);
+
+        $this->getJson('/monitors/status?token=status-token')
+            ->assertOk()
+            ->assertJsonPath('watches.nightly.schedule.cron', '0 0 * * *')
+            ->assertJsonPath('watches.broken.schedule', null);
+
+        $this->rebootWith(['system-status.watches.schedule' => false]);
+
+        $this->dashboard()->assertSee('Not scheduled')->assertDontSee('· next');
+        $this->getJson('/monitors/status?token=status-token')->assertJsonPath('watches.hourly.schedule', null);
     }
 
     protected function watches(array $definitions): void

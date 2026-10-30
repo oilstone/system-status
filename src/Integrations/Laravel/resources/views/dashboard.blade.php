@@ -11,20 +11,23 @@
      * @var array<string, array{label: string, state: string, results: list<\Oilstone\SystemStatus\Result>}> $categories
      * @var int $failures
      * @var float $slowest Milliseconds taken by the slowest check
-     * @var list<array{name: string, label: string, state: string, state_label: string, detail: string|null, forced: string|null, forced_until: \DateTimeImmutable|null, checked_at: \DateTimeImmutable|null}> $watches
-     *     state is up, down, pending (never run) or unknown (unreadable); forced is up or down
-     * @var array{state: string, label: string} $watchSummary up, down or unknown
+     * @var list<array{name: string, label: string, state: string, state_label: string, detail: string|null, forced: string|null, forced_until: \DateTimeImmutable|null, checked_at: \DateTimeImmutable|null, schedule: string, cron: string|null, next_run_at: \DateTimeImmutable|null, overdue_since: \DateTimeImmutable|null, error: string|null, last_check: array{rating: string, duration: float|null}|null}> $watches
+     *     state is up, down, pending (never run) or unknown (unreadable); forced is up or down; schedule is in words where it can be;
+     *     overdue_since is the scheduled run that hasn't happened; last_check is set when the last check rated degraded or worse without an error
+     * @var array{state: string, label: string} $watchSummary up, down, overdue or unknown
      */
     $tones = [
         'operational' => 'green', 'degraded' => 'amber', 'failing' => 'red', 'empty' => 'grey', 'invalid' => 'grey',
         'optimal' => 'green', 'acceptable' => 'teal', 'failed' => 'red',
-        'up' => 'green', 'down' => 'red', 'pending' => 'grey', 'unknown' => 'grey',
+        'up' => 'green', 'down' => 'red', 'pending' => 'grey', 'unknown' => 'grey', 'overdue' => 'amber',
     ];
     $colours = ['green' => '#12b76a', 'teal' => '#15b79e', 'amber' => '#f79009', 'red' => '#f04438', 'grey' => '#98a2b3'];
     $stateLabels = ['operational' => 'Operational', 'degraded' => 'Degraded', 'failing' => 'Failing'];
     $duration = fn (float $ms) => $ms < 1000
         ? number_format($ms, $ms < 10 ? 1 : 0) . ' ms'
         : number_format($ms / 1000, 2) . ' s';
+    // Times are shown in the viewer's own time by the script; this is what shows without it
+    $clock = fn (\DateTimeInterface $time) => $time->format($time->format('Y-m-d') === date('Y-m-d') ? 'H:i' : 'j M H:i');
     $favicon = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='7' fill='" . $colours[$tones[$state]] . "'/></svg>";
     $checks = $report === null ? 0 : count($report);
     $summary = sprintf(
@@ -230,7 +233,8 @@
         }
 
         .check__note { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
-        .check__note--forced { color: var(--amber-ink); }
+        .check__note--forced, .check__note--overdue { color: var(--amber-ink); }
+        .check__schedule { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
         .check__note::before { content: "↳ "; }
 
         .check__meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; }
@@ -412,10 +416,27 @@
                 </header>
                 <ul class="checks">
                     @foreach ($watches as $watch)
-                        <li class="check tone-{{ $tones[$watch['state']] }} @if ($watch['state'] === 'down') is-failing @endif">
+                        @php($overdue = $watch['overdue_since'] !== null)
+                        <li class="check tone-{{ $tones[$overdue && $watch['state'] !== 'down' ? 'overdue' : $watch['state']] }} @if ($watch['state'] === 'down') is-failing @endif">
                             <span class="check__dot" aria-hidden="true"></span>
                             <div>
                                 <div class="check__name">{{ $watch['label'] }}</div>
+                                <p class="check__schedule" @if ($watch['cron'] !== null) title="{{ $watch['cron'] }}" @endif>
+                                    {{ $watch['schedule'] }}
+                                    @if ($watch['next_run_at'] !== null)
+                                        · next <time datetime="{{ $watch['next_run_at']->format(DATE_ATOM) }}" data-local-time>{{ $clock($watch['next_run_at']) }}</time>
+                                    @endif
+                                </p>
+                                @if ($overdue)
+                                    <p class="check__note check__note--overdue">
+                                        Overdue since <time datetime="{{ $watch['overdue_since']->format(DATE_ATOM) }}" data-local-time>{{ $clock($watch['overdue_since']) }}</time>. Is the scheduler running?
+                                    </p>
+                                @endif
+                                @if ($watch['error'] !== null)
+                                    <p class="check__error">{{ $exposeErrors ? $watch['error'] : 'Check failed' }}</p>
+                                @elseif ($watch['last_check'] !== null)
+                                    <p class="check__note">Last check rated {{ $watch['last_check']['rating'] . ($watch['last_check']['duration'] === null ? '' : ' in ' . $duration($watch['last_check']['duration'])) }}</p>
+                                @endif
                                 @if ($watch['detail'] !== null)
                                     <p class="check__note">{{ $watch['detail'] }}</p>
                                 @endif
@@ -423,7 +444,7 @@
                                     <p class="check__note check__note--forced">
                                         Forced {{ $watch['forced'] }}
                                         @if ($watch['forced_until'] !== null)
-                                            until <time datetime="{{ $watch['forced_until']->format(DATE_ATOM) }}" data-local-time>{{ $watch['forced_until']->format('H:i') }}</time>
+                                            until <time datetime="{{ $watch['forced_until']->format(DATE_ATOM) }}" data-local-time>{{ $clock($watch['forced_until']) }}</time>
                                         @else
                                             until cleared
                                         @endif
@@ -434,7 +455,7 @@
                                 <span class="pill">{{ $watch['state_label'] }}</span>
                                 <span class="check__duration">
                                     @if ($watch['checked_at'] !== null)
-                                        <time datetime="{{ $watch['checked_at']->format(DATE_ATOM) }}" data-local-time>{{ $watch['checked_at']->format('H:i') }}</time>
+                                        <time datetime="{{ $watch['checked_at']->format(DATE_ATOM) }}" data-time-ago="Last checked">{{ $clock($watch['checked_at']) }}</time>
                                     @endif
                                 </span>
                             </div>
@@ -464,6 +485,16 @@
         var busy = false;
         var missed = false;
 
+        function timeAgo(date) {
+            var seconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
+
+            return seconds < 5 ? 'just now'
+                : seconds < 90 ? seconds + 's ago'
+                : seconds < 5400 ? Math.round(seconds / 60) + 'm ago'
+                : seconds < 129600 ? Math.round(seconds / 3600) + 'h ago'
+                : Math.round(seconds / 86400) + 'd ago';
+        }
+
         // Show when the report was checked in the viewer's own time, and how long ago
         function showCheckedAt() {
             var element = document.querySelector('[data-checked-at]');
@@ -473,18 +504,30 @@
             }
 
             var checked = new Date(element.getAttribute('datetime'));
-            var seconds = Math.max(0, Math.round((Date.now() - checked.getTime()) / 1000));
-            var ago = seconds < 5 ? 'just now' : seconds < 90 ? seconds + 's ago' : Math.round(seconds / 60) + 'm ago';
+            var ago = timeAgo(checked);
 
             element.textContent = checked.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
             element.title = ago;
             element.setAttribute('aria-label', element.textContent + ', ' + ago);
         }
 
-        // Watch times are shown in the viewer's own time too
+        // Watch times are shown in the viewer's own time too, with the date when it isn't today
         function showLocalTimes() {
+            var today = new Date().toDateString();
+
             document.querySelectorAll('[data-local-time]').forEach(function (element) {
-                element.textContent = new Date(element.getAttribute('datetime')).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                var date = new Date(element.getAttribute('datetime'));
+                var time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+                element.textContent = date.toDateString() === today ? time : date.toLocaleDateString([], { day: 'numeric', month: 'short' }) + ' ' + time;
+                element.title = date.toLocaleString();
+            });
+
+            document.querySelectorAll('[data-time-ago]').forEach(function (element) {
+                var date = new Date(element.getAttribute('datetime'));
+
+                element.textContent = timeAgo(date);
+                element.title = element.getAttribute('data-time-ago') + ' ' + date.toLocaleString();
             });
         }
 
@@ -561,7 +604,10 @@
 
         showCheckedAt();
         showLocalTimes();
-        setInterval(showCheckedAt, 5000);
+        setInterval(function () {
+            showCheckedAt();
+            showLocalTimes();
+        }, 5000);
     })();
 </script>
 </body>

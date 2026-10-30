@@ -73,9 +73,14 @@ class SystemStatusServiceProvider extends ServiceProvider
         });
 
         $this->app->singleton(WatchRegistry::class, function (Container $app): WatchRegistry {
+            $config = $app->make('config');
+
             return new WatchRegistry(
-                $app->make('config')->get('system-status.watches.definitions', []),
+                $config->get('system-status.watches.definitions', []),
                 fn () => $app->make(WatchStore::class),
+                (bool) $config->get('system-status.watches.schedule', true),
+                // The timezone Laravel gives the schedule
+                $config->get('app.schedule_timezone') ?? $config->get('app.timezone'),
             );
         });
 

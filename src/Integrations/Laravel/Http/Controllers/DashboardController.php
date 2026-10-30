@@ -6,22 +6,27 @@ use Illuminate\Contracts\Config\Repository;
 use Illuminate\Contracts\View\Factory as ViewFactory;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 use Oilstone\SystemStatus\Integrations\Laravel\Http\StatusQuery;
 use Oilstone\SystemStatus\Integrations\Laravel\Watches\WatchRegistry;
+use Oilstone\SystemStatus\Integrations\Laravel\Watches\WatchSchedule;
 use Oilstone\SystemStatus\Rating;
 use Oilstone\SystemStatus\Report;
 use Oilstone\SystemStatus\Result;
 use Oilstone\SystemStatus\SystemStatus;
 use Oilstone\SystemStatus\WatchState;
 use Oilstone\SystemStatus\WatchStatus;
+use Throwable;
 
 /**
  * The status report as a page for people, with the same access rules and options as the JSON status.
  */
 class DashboardController
 {
+    protected const DAYS = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays', 'Sundays'];
+
     protected const HEADLINES = [
         'operational' => 'All systems operational',
         'degraded' => 'Some systems are degraded',
@@ -58,7 +63,7 @@ class DashboardController
             'error' => $error,
             'failAt' => $failAt,
             ...$this->summarise($report, $failAt),
-            ...$this->summariseWatches($watches->statuses()),
+            ...$this->summariseWatches($watches),
         ])->render();
 
         return new Response($html, $error === null ? 200 : 422, [
@@ -104,13 +109,14 @@ class DashboardController
     }
 
     /**
-     * Each watch as it was left by its last run. Watches never change the headline or pass/fail.
-     *
-     * @param array<string, WatchStatus|null> $statuses
+     * Each watch as it was left by its last run, and when it runs. Watches never change the headline or pass/fail.
      */
-    protected function summariseWatches(array $statuses): array
+    protected function summariseWatches(WatchRegistry $registry): array
     {
+        $statuses = $registry->statuses();
+        $now = Date::now();
         $watches = [];
+        $overdue = 0;
 
         foreach ($statuses as $name => $status) {
             $state = match (true) {
@@ -118,6 +124,16 @@ class DashboardController
                 $status->checkedAt === null => 'pending',
                 default => $status->state->value,
             };
+
+            try {
+                $schedule = $registry->schedule($name, $status, $now);
+                $scheduleLabel = $schedule === null ? 'Not scheduled' : $this->describeSchedule($schedule);
+            } catch (Throwable) {
+                $schedule = null;
+                $scheduleLabel = 'Invalid schedule';
+            }
+
+            $overdue += $schedule?->overdueSince === null ? 0 : 1;
 
             $watches[] = [
                 'name' => $name,
@@ -133,6 +149,15 @@ class DashboardController
                 'forced' => $status?->forced?->value,
                 'forced_until' => $status?->forcedUntil,
                 'checked_at' => $status?->checkedAt,
+                'schedule' => $scheduleLabel,
+                'cron' => $schedule?->cron,
+                'next_run_at' => $schedule?->nextRunAt,
+                'overdue_since' => $schedule?->overdueSince,
+                'error' => $status?->error,
+                // Only worth saying when the rating, rather than an error, is why the check didn't pass
+                'last_check' => $status?->rating !== null && $status->error === null && $status->rating->isAtLeast(Rating::Degraded)
+                    ? ['rating' => $status->rating->label(), 'duration' => $status->duration]
+                    : null,
             ];
         }
 
@@ -143,10 +168,50 @@ class DashboardController
             'watches' => $watches,
             'watchSummary' => match (true) {
                 $down > 0 => ['state' => 'down', 'label' => $down . ' down'],
+                $overdue > 0 => ['state' => 'overdue', 'label' => $overdue . ' overdue'],
                 $up === count($statuses) => ['state' => 'up', 'label' => 'All up'],
                 default => ['state' => 'unknown', 'label' => $up . ' of ' . count($statuses) . ' up'],
             },
         ];
+    }
+
+    /**
+     * The common schedules in words, e.g. "Every 5 minutes" or "Daily at 02:00 UTC"; others as the cron expression.
+     */
+    protected function describeSchedule(WatchSchedule $schedule): string
+    {
+        $fields = preg_split('/\s+/', $schedule->cron) ?: [];
+
+        if (count($fields) !== 5 || $fields[2] !== '*' || $fields[3] !== '*') {
+            return $schedule->cron;
+        }
+
+        [$minute, $hour, , , $weekday] = $fields;
+
+        if ($hour === '*' && $weekday === '*') {
+            $every = str_starts_with($minute, '*/') ? substr($minute, 2) : '';
+
+            return match (true) {
+                $minute === '*' || $every === '1' => 'Every minute',
+                ctype_digit($every) => sprintf('Every %d minutes', $every),
+                $minute === '0' => 'Every hour',
+                ctype_digit($minute) => sprintf('Every hour at :%02d', $minute),
+                default => $schedule->cron,
+            };
+        }
+
+        if (! ctype_digit($minute) || ! ctype_digit($hour)) {
+            return $schedule->cron;
+        }
+
+        $at = sprintf('at %02d:%02d %s', $hour, $minute, $schedule->timezone);
+
+        return match (true) {
+            $weekday === '*' => 'Daily ' . $at,
+            $weekday === '1-5' => 'Weekdays ' . $at,
+            ctype_digit($weekday) && (int) $weekday <= 7 => static::DAYS[(int) $weekday] . ' ' . $at,
+            default => $schedule->cron,
+        };
     }
 
     /**
