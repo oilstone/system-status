@@ -97,9 +97,9 @@ class DashboardController
     }
 
     /**
-     * Runs the monitor named by ?monitor=, the monitor of the watch named by ?watch=, or every monitor in the
-     * requested categories, and returns their rows and results for the page to put in place. It never changes a
-     * watch's state.
+     * Runs the monitor named by ?monitor=, the monitor of the watch named by ?watch= (or of every watch, with
+     * ?watch=*), or every monitor in the requested categories, and returns their rows and results for the page to
+     * put in place. It never changes a watch's state.
      */
     public function run(Request $request, SystemStatus $status, WatchRegistry $watches): Response
     {
@@ -114,14 +114,15 @@ class DashboardController
                 throw new InvalidArgumentException('monitor and watch must each name one monitor or watch');
             }
 
-            if ($watch !== '' && ! $watches->has($watch)) {
+            if ($watch !== '' && $watch !== '*' && ! $watches->has($watch)) {
                 return $this->respond(sprintf('No watch named "%s" is defined', $watch), 404, 'text/plain');
             }
 
             // A watch of a status monitor is checked as that monitor, so its row shows the result too
-            $monitor = $watch === '' ? $monitor : (string) $watches->monitorId($watch, $status);
+            $monitor = $watch === '' || $watch === '*' ? $monitor : (string) $watches->monitorId($watch, $status);
 
             $results = match (true) {
+                $watch === '*' => $this->checkWatches($status, $watches),
                 $monitor !== '' => [$monitor => $status->checkMonitor($monitor)],
                 $watch !== '' => ['watch:' . $watch => $status->run($watches->get($watch)->monitor, 'watches')],
                 default => $this->checkAll($status, $status->definitions($query->categories)),
@@ -142,7 +143,8 @@ class DashboardController
             $items[] = [
                 'slot' => $id,
                 'result' => $described,
-                'monitor' => $monitor === '' && $watch !== '' ? null : $this->monitorItem($id, $result->name, $described, $links[$id] ?? []),
+                // A watch's own monitor has no row
+                'monitor' => $watch !== '' && ! $status->hasMonitor($id) ? null : $this->monitorItem($id, $result->name, $described, $links[$id] ?? []),
             ];
         }
 
@@ -175,6 +177,36 @@ class DashboardController
         foreach ($definitions as $category => $monitors) {
             foreach ($monitors as $key => $definition) {
                 $results[$category . '.' . $key] = $status->run($definition, (string) $category);
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * Each watch's monitor, keyed by the slot its result goes in: the id of the status monitor it checks, which runs
+     * once however many watches check it, or watch:{name} for a monitor of its own.
+     *
+     * @return array<string, Result>
+     */
+    protected function checkWatches(SystemStatus $status, WatchRegistry $watches): array
+    {
+        $results = [];
+
+        foreach ($watches->names() as $name) {
+            $id = $watches->monitorId($name, $status);
+
+            if ($id !== null) {
+                $results[$id] ??= $status->checkMonitor($id);
+
+                continue;
+            }
+
+            try {
+                $results['watch:' . $name] = $status->run($watches->get($name)->monitor, 'watches');
+            } catch (InvalidArgumentException $e) {
+                // A misconfigured watch fails on its own row rather than stopping the others
+                $results['watch:' . $name] = new Result('watches', Str::headline($name), Rating::Failed, 0.0, $e);
             }
         }
 

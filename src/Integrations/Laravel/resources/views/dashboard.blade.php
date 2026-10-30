@@ -443,6 +443,7 @@
                 <header class="section-header">
                     <h2>Watches</h2>
                     <span class="pill tone-{{ $tones[$watchSummary['state']] }}">{{ $watchSummary['label'] }}</span>
+                    <button type="button" class="button" data-run="watch=*" data-run-key="watch:*" title="Runs every watch's monitor without changing the watches">Check all</button>
                 </header>
                 <div class="card category">
                     <ul class="checks">
@@ -703,7 +704,8 @@
             notice.hidden = false;
         }
 
-        // Run one monitor (monitor=), a watch's monitor (watch=) or all of them (an empty query), and put the results in place
+        // Run one monitor (monitor=), a watch's monitor (watch=), every watch's (watch=*) or every monitor (an empty
+        // query), and put the results in place
         function runQuery(query, key) {
             var params = new URLSearchParams(window.location.search);
             var url = new URL(runUrl, window.location.href);
@@ -764,18 +766,21 @@
         }
 
         // Whether a run of these monitors would overlap one still waiting: all of them overlap every monitor, though
-        // not a watch's own monitor
+        // not a watch's own monitor, and every watch's may include any monitor
         function overlaps(key) {
             return Object.keys(running).some(function (other) {
-                return other === key || other === '*' || (key === '*' && other.indexOf('watch:') !== 0);
+                return other === key || other === '*' || other === 'watch:*' || (key === '*' && other.indexOf('watch:') !== 0);
             });
         }
 
         function run(button) {
             var query = button.getAttribute('data-run');
+            var key = button.getAttribute('data-run-key');
             var all = query === '';
-            var buttons = all ? Array.prototype.slice.call(document.querySelectorAll('[data-run]')) : [button];
-            var rows = all ? Array.prototype.slice.call(document.querySelectorAll('[data-monitor]')) : [button.closest('.check')];
+            var watches = key === 'watch:*';
+            var scope = watches ? button.closest('section') : document;
+            var buttons = all || watches ? Array.prototype.slice.call(scope.querySelectorAll('[data-run]')) : [button];
+            var rows = all || watches ? Array.prototype.slice.call(scope.querySelectorAll(all ? '[data-monitor]' : '[data-watch]')) : [button.closest('.check')];
             var label = button.textContent;
 
             buttons.forEach(function (element) { element.disabled = true; });
@@ -783,7 +788,7 @@
             button.textContent = 'Running…';
 
             // Runs asked for are always made; only live runs give way to ones still waiting
-            runQuery(query, button.getAttribute('data-run-key'))
+            runQuery(query, key)
                 .catch(function (error) {
                     showNotice('Couldn’t run the check: ' + error.message);
                 })
