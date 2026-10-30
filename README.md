@@ -2,7 +2,7 @@
 
 Health checks for the things an application depends on, reported as a pass/fail ping for load balancers, a detailed JSON report for uptime monitors and people, and a console command for deploy pipelines.
 
-Requires PHP 8.1+. The Laravel integration supports Laravel 10 and later.
+Requires PHP 8.2+. The Laravel integration supports Laravel 12 and later.
 
 ## Concepts
 
@@ -10,6 +10,7 @@ Requires PHP 8.1+. The Laravel integration supports Laravel 10 and later.
 - **Category**: a named group of monitors, such as `connections` or `services`. Checks run per category, so a load balancer can be pointed at the categories that should take a server out of rotation while third-party services are reported elsewhere.
 - **Rating**: `optimal`, `acceptable`, `degraded` or `failed`. A successful check is rated by its response time against the monitor's thresholds, then made worse by anything the monitor reported through the probe.
 - **Report**: the results of one run. It passes when no result is rated at or beyond the chosen `fail_at` rating (default `failed`).
+- **Watch**: a scheduled check of one monitor that tracks whether it is up or down over consecutive runs, and tells a handler, so you can alert or fail over. See [Watches](#watches).
 
 Monitors are only built when a check runs, and every run builds fresh results, so registering monitors costs nothing on ordinary requests and long-running processes never serve stale results. A monitor that cannot be built, for example because configuration is missing, becomes a failed result rather than breaking the report.
 
@@ -90,6 +91,86 @@ php artisan system-status:check services --fail-at=degraded
 
 Prints a table and exits non-zero when the report fails, which suits post-deploy checks.
 
+### Watches
+
+A watch checks one monitor on a schedule and tracks whether it is up or down, so you can alert someone or fail over to another provider when it goes down, and back when it recovers. Define watches in the `watches` section of `config/system-status.php`, keyed by name:
+
+```php
+'watches' => [
+    'cache_store' => env('SYSTEM_STATUS_WATCH_CACHE_STORE'),
+    'schedule' => true,
+    'definitions' => [
+        'payments' => [
+            'monitor' => ['type' => 'http', 'url' => 'https://payments.example.com/health'],
+            'failures' => 3,
+            'recoveries' => 2,
+            'handler' => App\Watches\FailOverPayments::class,
+            'cron' => '*/2 * * * *',
+            'fallback' => 'secondary',
+        ],
+    ],
+],
+```
+
+| Option | Purpose |
+| --- | --- |
+| `monitor` | Any monitor definition the `monitors` section accepts: an array with `type` or `class`, or a type or class name (required) |
+| `failures` | Consecutive failed checks before the watch is down (default 1) |
+| `recoveries` | Consecutive passing checks before a down watch is up again (default 1) |
+| `fail_at` | The rating that counts as failed (default `failed`) |
+| `handler` | A class implementing `Contracts\WatchHandler`, built through the container |
+| `cron` | When to run the watch (default every minute) |
+
+Any other keys, like `fallback` above, are passed to the handler as its options. Watch names may contain letters, numbers, dots, dashes and underscores.
+
+Each run checks the monitor just as the status does (its probe rating and response time thresholds, with any exception counting as failed) and compares the rating with `fail_at`. A watch starts up, goes down once `failures` consecutive checks fail, and comes back up once `recoveries` consecutive checks pass. The state is saved, then the handler is told the outcome of **every** run, not only changes, so it can reconcile idempotently and retry anything that failed last time:
+
+```php
+use Oilstone\SystemStatus\Contracts\WatchHandler;
+use Oilstone\SystemStatus\WatchOutcome;
+
+class FailOverPayments implements WatchHandler
+{
+    public function __construct(protected PaymentGateways $gateways)
+    {
+    }
+
+    public function handle(WatchOutcome $outcome, array $options): void
+    {
+        $this->gateways->use($outcome->isDown() ? $options['fallback'] : 'primary');
+    }
+}
+```
+
+`WatchOutcome` has the `watch` name, the built `monitor`, the `state` and `previous` state, whether it `changed` (also `wentDown()` and `recovered()`), the `forced` state or null, the check's `result` (null when forced), the consecutive `failures` and `passes`, and `checkedAt`. A handler that throws doesn't undo the state change.
+
+If a watch's monitor or handler can't be built, the run fails without changing the state or calling the handler, so a misconfiguration is never mistaken for an outage.
+
+When a watch goes down or recovers, Laravel's `MonitorWentDown` or `MonitorRecovered` event is dispatched (`Integrations\Laravel\Events`), carrying the outcome as `$event->outcome`, so you can listen for changes instead of, or as well as, writing a handler.
+
+State is kept in `watches.cache_store` (`SYSTEM_STATUS_WATCH_CACHE_STORE`, the default store when null). Unlike `ping.cache_store`, it must be shared by every server and support atomic locks, such as `redis`, `memcached` or `database`.
+
+When `watches.schedule` is on (the default), each watch is added to Laravel's scheduler with its `cron`, on one server at a time and without overlapping, so make sure `schedule:run` is running. Each scheduled run also claims its minute in `watches.cache_store`, so it runs once across your servers even if Laravel's default cache, which `onOneServer()` relies on, isn't shared; otherwise every server would check it and the thresholds would be reached too soon. To run watches yourself instead, turn it off and call the command:
+
+```bash
+php artisan system-status:watch            # every watch
+php artisan system-status:watch payments   # one watch
+```
+
+Each watch runs under a cache lock, so a manual run can't race the scheduled one; if the watch is already running it is skipped. The command prints each outcome and exits non-zero, reporting the exception, if a monitor or handler couldn't be built or a handler threw.
+
+To force a watch up or down regardless of its checks, for maintenance or a manual failover:
+
+```bash
+php artisan system-status:force payments down --minutes=30
+php artisan system-status:force payments up
+php artisan system-status:force payments clear
+```
+
+An override takes effect from the watch's next run, applies immediately without waiting for the thresholds, and lasts until cleared or for `--minutes`.
+
+Watches appear on the dashboard and under `watches` in the `/status` JSON, read from the store without running any checks: each watch's `state`, consecutive `failures` and `passes`, `forced` state and `forced_until`, and `checked_at`. They never affect the status's pass/fail or the ping.
+
 ### Laravel monitor types
 
 | Type | Options |
@@ -160,6 +241,36 @@ class ExampleApiMonitor extends Monitor
 - Override `configure()` for anything more involved.
 - Call `$this->fail()` (or throw anything) to fail the check.
 - Failed HTTP responses include the API's own error message where it can be found.
+- For an API with its own SDK, pass it `$this->sdkHttpClient()`: a Guzzle client with the monitor's `timeout`, `connect_timeout` and `options`, which leaves Guzzle's `http_errors` on, because SDKs rely on its exceptions.
+
+To rate how much of a quota has been used, use `RatesUsage`. It reads `degrade_usage` and `max_usage` options (percentages from 0 to 100, or null to turn that limit off), with defaults from the monitor:
+
+```php
+use Oilstone\SystemStatus\Concerns\RatesUsage;
+
+class ExampleQuotaMonitor extends Monitor
+{
+    use MakesHttpRequests, RatesUsage;
+
+    public function check(Probe $probe): void
+    {
+        $usage = $this->requestJson('GET', 'https://api.example.com/usage');
+
+        // Degrades or fails with e.g. "Daily API usage is at 83% (12500 of 15000)"
+        $this->rateUsage($probe, 'Daily API', $usage['used'], $usage['limit']);
+    }
+
+    protected function configure(): void
+    {
+        $this->validateUsageLimits();
+    }
+
+    protected function usageDefaults(): array
+    {
+        return ['degrade_usage' => 80, 'max_usage' => 95];
+    }
+}
+```
 
 To make a monitor available as a `type`, register it:
 
@@ -186,6 +297,29 @@ echo json_encode($report->toArray(Rating::Failed, exposeErrors: false));
 ```
 
 Requesting a category that has no monitors throws `UnknownCategory` rather than silently passing.
+
+Watches work without Laravel too; schedule the runs yourself, e.g. with cron:
+
+```php
+use Oilstone\SystemStatus\Watch;
+use Oilstone\SystemStatus\Watcher;
+use Oilstone\SystemStatus\WatchState;
+use Oilstone\SystemStatus\WatchStore;
+
+$store = new WatchStore($psr16Cache); // shared by every server
+$watcher = new Watcher($status->factory(), $store);
+
+$outcome = $watcher->run(Watch::fromArray('payments', [
+    'monitor' => ['type' => 'http', 'url' => 'https://payments.example.com/health'],
+    'failures' => 3,
+    'handler' => FailOverPayments::class, // constructed without arguments outside Laravel
+]));
+
+$store->force('payments', WatchState::Down, seconds: 1800);
+$store->clear('payments');
+```
+
+`Watcher::run()` throws when the monitor or handler can't be built (changing nothing), and throws `WatchHandlerFailed`, carrying the `outcome`, when the handler throws after the state was saved. Run each watch from one process at a time.
 
 ## Upgrading from 1.x
 

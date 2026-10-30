@@ -11,10 +11,14 @@
      * @var array<string, array{label: string, state: string, results: list<\Oilstone\SystemStatus\Result>}> $categories
      * @var int $failures
      * @var float $slowest Milliseconds taken by the slowest check
+     * @var list<array{name: string, label: string, state: string, state_label: string, detail: string|null, forced: string|null, forced_until: \DateTimeImmutable|null, checked_at: \DateTimeImmutable|null}> $watches
+     *     state is up, down, pending (never run) or unknown (unreadable); forced is up or down
+     * @var array{state: string, label: string} $watchSummary up, down or unknown
      */
     $tones = [
         'operational' => 'green', 'degraded' => 'amber', 'failing' => 'red', 'empty' => 'grey', 'invalid' => 'grey',
         'optimal' => 'green', 'acceptable' => 'teal', 'failed' => 'red',
+        'up' => 'green', 'down' => 'red', 'pending' => 'grey', 'unknown' => 'grey',
     ];
     $colours = ['green' => '#12b76a', 'teal' => '#15b79e', 'amber' => '#f79009', 'red' => '#f04438', 'grey' => '#98a2b3'];
     $stateLabels = ['operational' => 'Operational', 'degraded' => 'Degraded', 'failing' => 'Failing'];
@@ -226,6 +230,7 @@
         }
 
         .check__note { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+        .check__note--forced { color: var(--amber-ink); }
         .check__note::before { content: "↳ "; }
 
         .check__meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; }
@@ -398,6 +403,46 @@
                 Add monitors to the <code>monitors</code> section of <code>config/system-status.php</code>.
             </div>
         @endif
+
+        @if ($watches !== [])
+            <section class="card category" data-watches>
+                <header class="category__header">
+                    <h2>Watches</h2>
+                    <span class="pill tone-{{ $tones[$watchSummary['state']] }}">{{ $watchSummary['label'] }}</span>
+                </header>
+                <ul class="checks">
+                    @foreach ($watches as $watch)
+                        <li class="check tone-{{ $tones[$watch['state']] }} @if ($watch['state'] === 'down') is-failing @endif">
+                            <span class="check__dot" aria-hidden="true"></span>
+                            <div>
+                                <div class="check__name">{{ $watch['label'] }}</div>
+                                @if ($watch['detail'] !== null)
+                                    <p class="check__note">{{ $watch['detail'] }}</p>
+                                @endif
+                                @if ($watch['forced'] !== null)
+                                    <p class="check__note check__note--forced">
+                                        Forced {{ $watch['forced'] }}
+                                        @if ($watch['forced_until'] !== null)
+                                            until <time datetime="{{ $watch['forced_until']->format(DATE_ATOM) }}" data-local-time>{{ $watch['forced_until']->format('H:i') }}</time>
+                                        @else
+                                            until cleared
+                                        @endif
+                                    </p>
+                                @endif
+                            </div>
+                            <div class="check__timing">
+                                <span class="pill">{{ $watch['state_label'] }}</span>
+                                <span class="check__duration">
+                                    @if ($watch['checked_at'] !== null)
+                                        <time datetime="{{ $watch['checked_at']->format(DATE_ATOM) }}" data-local-time>{{ $watch['checked_at']->format('H:i') }}</time>
+                                    @endif
+                                </span>
+                            </div>
+                        </li>
+                    @endforeach
+                </ul>
+            </section>
+        @endif
     </main>
 
     <footer class="footer">
@@ -436,6 +481,13 @@
             element.setAttribute('aria-label', element.textContent + ', ' + ago);
         }
 
+        // Watch times are shown in the viewer's own time too
+        function showLocalTimes() {
+            document.querySelectorAll('[data-local-time]').forEach(function (element) {
+                element.textContent = new Date(element.getAttribute('datetime')).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            });
+        }
+
         function refresh() {
             if (busy) {
                 return;
@@ -472,6 +524,7 @@
 
                     notice.hidden = true;
                     showCheckedAt();
+                    showLocalTimes();
                 })
                 .catch(function () {
                     notice.textContent = 'Couldn’t refresh at ' + new Date().toLocaleTimeString() + '. Showing the last result.';
@@ -507,6 +560,7 @@
         }
 
         showCheckedAt();
+        showLocalTimes();
         setInterval(showCheckedAt, 5000);
     })();
 </script>

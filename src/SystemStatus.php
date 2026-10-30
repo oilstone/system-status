@@ -114,25 +114,7 @@ class SystemStatus
             return new Result($category, $this->factory->nameFor($definition), Rating::Failed, 0.0, $e);
         }
 
-        $probe = new Probe();
-        $error = null;
-        $started = hrtime(true);
-
-        try {
-            $monitor->check($probe);
-        } catch (Throwable $e) {
-            $error = $e;
-        }
-
-        $duration = (hrtime(true) - $started) / 1e6;
-
-        try {
-            $rating = $error === null ? Rating::worst($probe->rating(), $monitor->rate($duration)) : Rating::Failed;
-        } catch (Throwable $e) {
-            [$rating, $error] = [Rating::Failed, $e];
-        }
-
-        return new Result($category, $monitor->name(), $rating, $duration, $error, $probe->notes(), $probe->metadata());
+        return Probe::run($monitor, $category);
     }
 
     /**

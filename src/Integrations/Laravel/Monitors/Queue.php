@@ -39,17 +39,13 @@ class Queue extends Monitor
         $queue = $this->config['queue'] ?? null;
 
         // size() also counts delayed and reserved jobs, which are not waiting to be picked up
-        $waiting = (int) (method_exists($connection, 'pendingSize') ? $connection->pendingSize($queue) : $connection->size($queue));
+        $waiting = (int) $connection->pendingSize($queue);
 
         $probe->meta('waiting', $waiting);
         $this->limit($probe, 'waiting', $waiting, '%d jobs are waiting');
 
         if (! isset($this->config['degrade_age']) && ! isset($this->config['max_age'])) {
             return;
-        }
-
-        if (! method_exists($connection, 'creationTimeOfOldestPendingJob')) {
-            throw InvalidMonitorConfiguration::invalid($this->name(), 'this queue connection cannot report the age of its oldest job');
         }
 
         $created = $connection->creationTimeOfOldestPendingJob($queue);

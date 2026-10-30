@@ -12,7 +12,6 @@ use Oilstone\SystemStatus\Tests\Fixtures\FakeMonitor;
 use Oilstone\SystemStatus\Tests\Fixtures\FakeQueueConnection;
 use Oilstone\SystemStatus\Tests\Fixtures\FakeQueueFactory;
 use Oilstone\SystemStatus\Tests\Fixtures\InjectedCheck;
-use Oilstone\SystemStatus\Tests\Fixtures\LegacyQueueConnection;
 use Oilstone\SystemStatus\Tests\Fixtures\MonitorWithDependency;
 
 class MonitorsTest extends TestCase
@@ -74,15 +73,6 @@ class MonitorsTest extends TestCase
 
         $this->assertSame(Rating::Degraded, $this->queue(new FakeQueueConnection(pending: 1, oldest: time() - 45), ['degrade_age' => 30, 'max_age' => 60])->rating);
         $this->assertSame(Rating::Optimal, $this->queue(new FakeQueueConnection(), ['max_age' => 60])->rating);
-    }
-
-    public function test_the_queue_monitor_supports_older_drivers(): void
-    {
-        $this->assertSame(['waiting' => 7], $this->queue(new LegacyQueueConnection(), [])->meta);
-        $this->assertSame(
-            'Queue (default) is misconfigured: this queue connection cannot report the age of its oldest job',
-            $this->queue(new LegacyQueueConnection(), ['max_age' => 60])->errorMessage(),
-        );
     }
 
     public function test_the_queue_monitor_validates_its_limits(): void

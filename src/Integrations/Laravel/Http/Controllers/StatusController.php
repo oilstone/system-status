@@ -7,7 +7,9 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use InvalidArgumentException;
 use Oilstone\SystemStatus\Integrations\Laravel\Http\StatusQuery;
+use Oilstone\SystemStatus\Integrations\Laravel\Watches\WatchRegistry;
 use Oilstone\SystemStatus\SystemStatus;
+use Oilstone\SystemStatus\WatchStatus;
 
 class StatusController
 {
@@ -15,7 +17,7 @@ class StatusController
     {
     }
 
-    public function __invoke(Request $request, SystemStatus $status): JsonResponse
+    public function __invoke(Request $request, SystemStatus $status, WatchRegistry $watches): JsonResponse
     {
         $settings = $this->config->get('system-status.status', []);
         $headers = ['Cache-Control' => 'no-store'];
@@ -29,8 +31,18 @@ class StatusController
             return new JsonResponse(['error' => $e->getMessage()], 422, $headers, $options);
         }
 
+        $data = $report->toArray($query->failAt, (bool) ($settings['expose_errors'] ?? true));
+
+        // Read from the store as the watches last left them; they never affect the outcome
+        if ($statuses = $watches->statuses()) {
+            $data['watches'] = array_map(
+                fn (?WatchStatus $status) => $status?->toArray() ?? ['error' => 'The watch state could not be read'],
+                $statuses,
+            );
+        }
+
         return new JsonResponse(
-            $report->toArray($query->failAt, (bool) ($settings['expose_errors'] ?? true)),
+            $data,
             $report->passes($query->failAt) ? 200 : 503,
             $headers,
             $options,
