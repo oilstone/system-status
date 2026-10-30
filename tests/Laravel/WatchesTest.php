@@ -583,6 +583,42 @@ class WatchesTest extends TestCase
             ->assertSee('No watch named "nope" is defined', false);
     }
 
+    public function test_every_watch_can_be_checked_from_the_dashboard_at_once(): void
+    {
+        $runs = 0;
+        $this->monitors(['services' => [
+            'payments' => ['type' => 'callback', 'name' => 'Payments API', 'callback' => function () use (&$runs) {
+                $runs++;
+
+                return static::$healthy;
+            }],
+            'search' => ['type' => 'file', 'path' => __FILE__, 'name' => 'Search'],
+        ]]);
+        $this->watches([
+            'payments' => ['monitor' => 'services.payments', 'failures' => 2],
+            'payments-again' => ['monitor' => 'services.payments'],
+            'search' => ['monitor' => ['type' => 'callback', 'name' => 'Search index', 'callback' => fn () => static::$healthy]],
+            'broken' => ['monitor' => ['type' => 'file', 'path' => __FILE__], 'handler' => 'Nope'],
+        ]);
+
+        static::$healthy = false;
+
+        $this->dashboard()->assertSeeInOrder(['Watches', 'data-run="watch=*" data-run-key="watch:*"', 'Check all', 'id="watch-payments"'], false);
+
+        // A monitor checked by several watches runs once, and only the status monitors' rows come back
+        $this->get('/monitors/dashboard/run?watch=*', ['X-Status-Token' => 'status-token'])
+            ->assertOk()
+            ->assertSeeInOrder(['data-monitor="services.payments"', 'Watched by Payments', 'Watched by Payments Again', 'Failed'], false)
+            ->assertDontSee('data-monitor="services.search"', false)
+            ->assertSeeInOrder(['data-check-for="services.payments"', 'Payments API returned false'], false)
+            ->assertSeeInOrder(['data-check-for="watch:search"', 'Search index returned false'], false)
+            ->assertSeeInOrder(['data-check-for="watch:broken"', 'failed', 'handler must be the name of a class'], false);
+
+        $this->assertSame(1, $runs);
+        $this->assertNull($this->store()->get('payments')->checkedAt);
+        $this->assertNull($this->store()->get('search')->checkedAt);
+    }
+
     public function test_overdue_warnings_can_be_turned_off(): void
     {
         $this->rebootWith(['system-status.watches.overdue_warnings' => false]);
