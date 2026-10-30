@@ -34,19 +34,27 @@ class WatchStore
             $state === null ? null : $this->time($stored['checked_at'] ?? null),
             $forced,
             $forced === null ? null : $this->time($override['expires_at'] ?? null),
+            $state === null ? null : Rating::tryParse(is_string($stored['rating'] ?? null) ? $stored['rating'] : null),
+            $state === null || ! is_numeric($stored['duration_ms'] ?? null) ? null : (float) $stored['duration_ms'],
+            $state === null || ! is_string($stored['error'] ?? null) ? null : $stored['error'],
         );
     }
 
     /**
+     * @param Result|null $result The check's result, kept to show why it failed; null when forced
+     *
      * @throws RuntimeException When the cache refuses the write
      */
-    public function save(string $watch, WatchState $state, int $failures, int $passes, DateTimeInterface $checkedAt): void
+    public function save(string $watch, WatchState $state, int $failures, int $passes, DateTimeInterface $checkedAt, ?Result $result = null): void
     {
         $saved = $this->cache->set($this->key($watch, 'state'), [
             'state' => $state->value,
             'failures' => $failures,
             'passes' => $passes,
             'checked_at' => $checkedAt->getTimestamp(),
+            'rating' => $result?->rating->label(),
+            'duration_ms' => $result === null ? null : round($result->duration, 1),
+            'error' => $result?->errorMessage(),
         ]);
 
         if (! $saved) {

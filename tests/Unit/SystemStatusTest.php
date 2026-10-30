@@ -3,6 +3,7 @@
 namespace Oilstone\SystemStatus\Tests\Unit;
 
 use Oilstone\SystemStatus\Exceptions\UnknownCategory;
+use Oilstone\SystemStatus\Exceptions\UnknownMonitor;
 use Oilstone\SystemStatus\Probe;
 use Oilstone\SystemStatus\Rating;
 use Oilstone\SystemStatus\Result;
@@ -156,6 +157,59 @@ class SystemStatusTest extends TestCase
      * @param list<Result> $results
      * @return list<string>
      */
+    public function test_monitors_with_keys_have_ids(): void
+    {
+        $status = (new SystemStatus())->addMany([
+            'services' => [
+                'payments' => ['class' => FakeMonitor::class, 'name' => 'Payments'],
+                ['class' => FakeMonitor::class, 'name' => 'Search'],
+            ],
+            'third.party' => ['mail' => ['class' => FakeMonitor::class, 'name' => 'Mail', 'check' => fn (Probe $probe) => $probe->fail('Mail is down')]],
+        ]);
+
+        $this->assertTrue($status->hasMonitor('services.payments'));
+        $this->assertTrue($status->hasMonitor('services.0'));
+        $this->assertTrue($status->hasMonitor('third.party.mail'));
+        $this->assertFalse($status->hasMonitor('services.mail'));
+        $this->assertFalse($status->hasMonitor('services'));
+
+        $this->assertSame('Payments', $status->checkMonitor('services.payments')->name);
+        $this->assertSame('services', $status->checkMonitor('services.payments')->category);
+        $this->assertSame('Search', $status->checkMonitor('services.0')->name);
+        $this->assertSame(Rating::Failed, $status->checkMonitor('third.party.mail')->rating);
+        $this->assertSame('Mail', $status->make('third.party.mail')->name());
+        $this->assertSame('Payments', $status->check('services')->results()[0]->name);
+
+        $this->expectException(UnknownMonitor::class);
+        $this->expectExceptionMessage('No monitor has the id "services.mail"');
+
+        $status->checkMonitor('services.mail');
+    }
+
+    public function test_a_monitor_added_with_an_existing_key_replaces_it(): void
+    {
+        $status = (new SystemStatus())
+            ->add(['class' => FakeMonitor::class, 'name' => 'Old'], 'services', 'payments')
+            ->add(['class' => FakeMonitor::class, 'name' => 'Other'], 'services')
+            ->add(['class' => FakeMonitor::class, 'name' => 'New'], 'services', 'payments');
+
+        $this->assertSame(['New', 'Other'], $this->names($status->check()->results()));
+    }
+
+    public function test_definitions_are_listed_without_building_them(): void
+    {
+        $status = (new SystemStatus())
+            ->add(fn () => throw new RuntimeException('Built'), 'connections')
+            ->add(['class' => FakeMonitor::class], 'services', 'payments');
+
+        $this->assertSame(['services', 'connections'], array_keys($status->definitions(['services', 'connections'])));
+        $this->assertSame(['payments'], array_keys($status->definitions('services')['services']));
+
+        $this->expectException(UnknownCategory::class);
+
+        $status->definitions('nope');
+    }
+
     protected function names(array $results): array
     {
         return array_map(fn (Result $result) => $result->name, $results);

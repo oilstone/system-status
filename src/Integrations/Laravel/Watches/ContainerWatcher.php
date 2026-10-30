@@ -8,7 +8,7 @@ use Oilstone\SystemStatus\Contracts\WatchHandler;
 use Oilstone\SystemStatus\Exceptions\WatchHandlerFailed;
 use Oilstone\SystemStatus\Integrations\Laravel\Events\MonitorRecovered;
 use Oilstone\SystemStatus\Integrations\Laravel\Events\MonitorWentDown;
-use Oilstone\SystemStatus\MonitorFactory;
+use Oilstone\SystemStatus\SystemStatus;
 use Oilstone\SystemStatus\Watch;
 use Oilstone\SystemStatus\Watcher;
 use Oilstone\SystemStatus\WatchOutcome;
@@ -20,12 +20,12 @@ use Oilstone\SystemStatus\WatchStore;
 class ContainerWatcher extends Watcher
 {
     public function __construct(
-        MonitorFactory $factory,
+        SystemStatus $status,
         WatchStore $store,
         protected Container $container,
         protected Dispatcher $events,
     ) {
-        parent::__construct($factory, $store);
+        parent::__construct($status, $store);
     }
 
     public function run(Watch $watch): WatchOutcome

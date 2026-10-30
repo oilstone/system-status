@@ -73,15 +73,20 @@ class SystemStatusServiceProvider extends ServiceProvider
         });
 
         $this->app->singleton(WatchRegistry::class, function (Container $app): WatchRegistry {
+            $config = $app->make('config');
+
             return new WatchRegistry(
-                $app->make('config')->get('system-status.watches.definitions', []),
+                $config->get('system-status.watches.definitions', []),
                 fn () => $app->make(WatchStore::class),
+                (bool) $config->get('system-status.watches.schedule', true),
+                // The timezone Laravel gives the schedule
+                $config->get('app.schedule_timezone') ?? $config->get('app.timezone'),
             );
         });
 
         $this->app->singleton(Watcher::class, function (Container $app): Watcher {
             // Shares the status factory, so watches can use every registered monitor type
-            return new ContainerWatcher($app->make(SystemStatus::class)->factory(), $app->make(WatchStore::class), $app, $app->make('events'));
+            return new ContainerWatcher($app->make(SystemStatus::class), $app->make(WatchStore::class), $app, $app->make('events'));
         });
     }
 
@@ -143,13 +148,14 @@ class SystemStatusServiceProvider extends ServiceProvider
 
                 if ($config->get('system-status.dashboard.enabled', true)) {
                     // The dashboard shows the same report, so it is protected at least as well as the status
-                    Route::get('dashboard', DashboardController::class)
-                        ->middleware([
-                            AuthorizeStatusRequest::class,
-                            ...($settings['status_middleware'] ?? []),
-                            ...($settings['dashboard_middleware'] ?? []),
-                        ])
-                        ->name('system-status.dashboard');
+                    $middleware = [
+                        AuthorizeStatusRequest::class,
+                        ...($settings['status_middleware'] ?? []),
+                        ...($settings['dashboard_middleware'] ?? []),
+                    ];
+
+                    Route::get('dashboard', DashboardController::class)->middleware($middleware)->name('system-status.dashboard');
+                    Route::get('dashboard/run', [DashboardController::class, 'run'])->middleware($middleware)->name('system-status.dashboard.run');
                 }
             });
     }

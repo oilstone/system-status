@@ -34,7 +34,7 @@ Define monitors by category in `config/system-status.php`:
         ['type' => 'cache', 'store' => 'redis'],
     ],
     'services' => [
-        ['class' => App\Monitors\SalesforceMonitor::class, 'client_id' => env('SALESFORCE_CLIENT_ID')],
+        'salesforce' => ['class' => App\Monitors\SalesforceMonitor::class, 'client_id' => env('SALESFORCE_CLIENT_ID')],
     ],
 ],
 
@@ -45,6 +45,8 @@ Define monitors by category in `config/system-status.php`:
 
 Definitions are plain arrays (or a bare type or class name, such as `'database'`), so the config can be cached. Monitor classes are built through the container: their constructor receives the options as `$config` and can type-hint any other dependency.
 
+Each monitor has an id made of its category and its key in that category: `services.salesforce` above, or `connections.0` for one in a plain list. Give a monitor a string key when something else refers to it, such as a [watch](#watches) or a link to it on the dashboard, so the id doesn't change when the list is reordered.
+
 ### Routes
 
 Registered under the `routes.prefix` (default `monitors`), outside the `web` middleware group so polling never creates sessions.
@@ -54,7 +56,8 @@ Registered under the `routes.prefix` (default `monitors`), outside the `web` mid
 | `GET /monitors/heartbeat` | The app boots and serves requests | `OK` 200 |
 | `GET /monitors/ping` | Load balancer health check over `ping.categories` | `OK` 200 or `FAIL` 503 |
 | `GET /monitors/status` | Full JSON report, access controlled | 200 when passing, 503 when failing |
-| `GET /monitors/dashboard` | The same report as a page for people, access controlled | HTML, 200 |
+| `GET /monitors/dashboard` | Watches and monitors as a page for people, access controlled | HTML, 200 |
+| `GET /monitors/dashboard/run` | Runs monitors for the dashboard's buttons, access controlled | HTML, 200 |
 
 The ping outcome is cached per server for `ping.cache_seconds` (default 10) in `ping.cache_store` (`SYSTEM_STATUS_CACHE_STORE`, default `file`), so frequent or malicious requests can't make every hit query your dependencies. Keep the store local to each server, so a cache outage can't slow the ping down, and set `cache_seconds` to `0` to always check live. Failures are only logged when the checks actually run.
 
@@ -72,7 +75,15 @@ Failed pings are logged as warnings with the failing monitors and their errors, 
 
 ### Dashboard
 
-`/monitors/dashboard` shows the status report as a page to open in a browser: an overall headline, then each category's monitors with their ratings, timings, notes, metadata and errors. It follows the system's light or dark theme and refreshes itself in place every `dashboard.refresh_seconds` (default 30, `0` to stop), skipping refreshes while the tab is hidden and saying so if a refresh fails.
+`/monitors/dashboard` is a page to open in a browser. It follows the system's light or dark theme and refreshes itself in place every `dashboard.refresh_seconds` (default 30, `0` to stop), skipping refreshes while the tab is hidden and saying so if a refresh fails.
+
+When [watches](#watches) are defined, they lead the page. The headline comes from their stored state ("Payments is down", "Search is overdue", "All watches up"), followed by counts of watches that are up, down and overdue, then each watch. The monitors are listed by category below, but the page **doesn't run them**, so opening it or leaving it open puts no load on your dependencies, and it stays fast during an outage. Use **Run now** on a monitor, **Run all**, or **Check now** on a watch, which runs the watch's monitor without changing the watch. Results stay on the page until the next run, through refreshes.
+
+To keep monitors up to date, press **Live** in the Monitors header to run them all again at every refresh, or **Live** on a single monitor to follow just that one. Live runs use `dashboard.refresh_seconds` (every 30 seconds when refreshing is off), pause while the tab is hidden, and skip a monitor that is still running from any run: a live one, **Run now**, **Run all** or **Check now**. The URL records what is live (`?live=all`, or `?live=services.payments` for each monitor), so a screen left showing the dashboard can be bookmarked live.
+
+Without watches, the page checks every monitor as it loads, and the headline comes from that report, as the `/status` JSON does. **Run all** then checks them again by refreshing the page, so the headline always matches the results; there are no per-monitor or live buttons, since everything runs at each refresh.
+
+Each category of monitors can be opened or closed. A category starts closed unless it has a problem: a failing or degraded result, or a watch of one of its monitors that is down. Sections stay as you leave them when the page refreshes. A watch that [names a status monitor](#watches) links to that monitor's row, and the row shows which watches check it and their state.
 
 It uses the same access rules as `/status`, so open it with `?token=` or from an allowed IP. It also honours the same `categories`, `fail_at` and `expose_errors` settings and query parameters, e.g. `/monitors/dashboard?token=…&categories=services`. Pages are sent with `Referrer-Policy: no-referrer` and `noindex`, so a token in the URL isn't leaked to other sites or search engines.
 
@@ -115,7 +126,7 @@ A watch checks one monitor on a schedule and tracks whether it is up or down, so
 
 | Option | Purpose |
 | --- | --- |
-| `monitor` | Any monitor definition the `monitors` section accepts: an array with `type` or `class`, or a type or class name (required) |
+| `monitor` | The id of a monitor in the `monitors` section, such as `services.payments`, or any monitor definition that section accepts: an array with `type` or `class`, or a type or class name (required) |
 | `failures` | Consecutive failed checks before the watch is down (default 1) |
 | `recoveries` | Consecutive passing checks before a down watch is up again (default 1) |
 | `fail_at` | The rating that counts as failed (default `failed`) |
@@ -123,6 +134,24 @@ A watch checks one monitor on a schedule and tracks whether it is up or down, so
 | `cron` | When to run the watch (default every minute) |
 
 Any other keys, like `fallback` above, are passed to the handler as its options. Watch names may contain letters, numbers, dots, dashes and underscores.
+
+A watch can check a monitor you already report on, rather than defining its own copy, by naming its id:
+
+```php
+'monitors' => [
+    'services' => [
+        'payments' => ['type' => 'http', 'url' => 'https://payments.example.com/health'],
+    ],
+],
+
+'watches' => [
+    'definitions' => [
+        'payments' => ['monitor' => 'services.payments', 'failures' => 3],
+    ],
+],
+```
+
+The watch then runs exactly the check the status runs. The dashboard links the watch and the monitor to each other, and **Check now** on the watch shows its result in the monitor's row too. The watch's entry in the `/status` JSON gives the id as `monitor`.
 
 Each run checks the monitor just as the status does (its probe rating and response time thresholds, with any exception counting as failed) and compares the rating with `fail_at`. A watch starts up, goes down once `failures` consecutive checks fail, and comes back up once `recoveries` consecutive checks pass. The state is saved, then the handler is told the outcome of **every** run, not only changes, so it can reconcile idempotently and retry anything that failed last time:
 
@@ -174,7 +203,9 @@ php artisan system-status:force payments clear
 
 An override takes effect from the watch's next run, applies immediately without waiting for the thresholds, and lasts until cleared or for `--minutes`.
 
-Watches appear on the dashboard and under `watches` in the `/status` JSON, read from the store without running any checks: each watch's `state`, consecutive `failures` and `passes`, `forced` state and `forced_until`, and `checked_at`. They never affect the status's pass/fail or the ping.
+Watches appear on the dashboard and under `watches` in the `/status` JSON, read from the store without running any checks: each watch's `state`, consecutive `failures` and `passes`, `forced` state and `forced_until`, `checked_at`, its `last_check` (the `rating`, `duration_ms` and any `error`, following `expose_errors`; null before the first check or after a forced run), and the id of the status `monitor` it checks, or null. They never affect the status's pass/fail or the ping.
+
+When the watches are scheduled, each also has a `schedule`: its `cron`, the `timezone` the scheduler reads it in (`app.schedule_timezone`, or `app.timezone`), `next_run_at`, and `overdue_since`, the run that should have followed the last one but more than five minutes later still hasn't. An overdue watch usually means `schedule:run` has stopped, so its state is out of date. The dashboard shows the schedule in words where it can ("Every 5 minutes", "Weekdays at 02:30 UTC"), when it runs next, and flags overdue watches.
 
 ### Laravel monitor types
 
@@ -312,7 +343,7 @@ use Oilstone\SystemStatus\WatchState;
 use Oilstone\SystemStatus\WatchStore;
 
 $store = new WatchStore($psr16Cache); // shared by every server
-$watcher = new Watcher($status->factory(), $store);
+$watcher = new Watcher($status, $store);
 
 $outcome = $watcher->run(Watch::fromArray('payments', [
     'monitor' => ['type' => 'http', 'url' => 'https://payments.example.com/health'],
@@ -324,7 +355,9 @@ $store->force('payments', WatchState::Down, seconds: 1800);
 $store->clear('payments');
 ```
 
-`Watcher::run()` throws when the monitor or handler can't be built (changing nothing), and throws `WatchHandlerFailed`, carrying the `outcome`, when the handler throws after the state was saved. Run each watch from one process at a time.
+A watch's `monitor` can be the id of a monitor added to `$status` with a key, e.g. `$status->add([...], 'services', 'payments')` and `'monitor' => 'services.payments'`. `$status->checkMonitor('services.payments')` checks one monitor on its own.
+
+`Watcher::run()` throws when the monitor or handler can't be built (changing nothing), and throws `WatchHandlerFailed`, carrying the `outcome`, when the handler throws after the state was saved. Run each watch from one process at a time. `$store->get('payments')` returns the stored `WatchStatus`, including the last check's `rating`, `duration` and `error`.
 
 ## Upgrading from 1.x
 

@@ -4,8 +4,14 @@ namespace Oilstone\SystemStatus\Integrations\Laravel\Watches;
 
 use Closure;
 use Cron\CronExpression;
+use DateTimeImmutable;
+use DateTimeInterface;
+use DateTimeZone;
+use Illuminate\Support\Facades\Date;
 use InvalidArgumentException;
 use Oilstone\SystemStatus\Exceptions\InvalidMonitorConfiguration;
+use Oilstone\SystemStatus\Integrations\Laravel\Console\WatchCommand;
+use Oilstone\SystemStatus\SystemStatus;
 use Oilstone\SystemStatus\Watch;
 use Oilstone\SystemStatus\WatchStatus;
 use Oilstone\SystemStatus\WatchStore;
@@ -19,11 +25,25 @@ class WatchRegistry
     public const DEFAULT_CRON = '* * * * *';
 
     /**
+     * How late a scheduled run may start before the watch is overdue: as long as the previous run may hold its lock.
+     */
+    public const OVERDUE_AFTER_SECONDS = WatchCommand::LOCK_SECONDS;
+
+    protected string $timezone;
+
+    /**
      * @param array<string, array> $definitions
      * @param Closure(): WatchStore $store Resolved only when statuses are read
+     * @param bool $scheduled Whether the watches are added to Laravel's scheduler
+     * @param DateTimeZone|string|null $timezone The scheduler's timezone; the default timezone when null
      */
-    public function __construct(protected array $definitions, protected Closure $store)
-    {
+    public function __construct(
+        protected array $definitions,
+        protected Closure $store,
+        protected bool $scheduled = true,
+        DateTimeZone|string|null $timezone = null,
+    ) {
+        $this->timezone = $timezone instanceof DateTimeZone ? $timezone->getName() : ($timezone ?? date_default_timezone_get());
     }
 
     /**
@@ -52,6 +72,20 @@ class WatchRegistry
     }
 
     /**
+     * The id of the status monitor the watch checks, when its monitor names one rather than defining its own.
+     */
+    public function monitorId(string $name, SystemStatus $status): ?string
+    {
+        try {
+            $monitor = $this->get($name)->monitor;
+        } catch (InvalidArgumentException) {
+            return null;
+        }
+
+        return is_string($monitor) && $status->hasMonitor($monitor) ? $monitor : null;
+    }
+
+    /**
      * @throws InvalidMonitorConfiguration When the expression is invalid, which the scheduler can't recover from
      */
     public function cron(string $name): string
@@ -63,6 +97,34 @@ class WatchRegistry
         }
 
         return $cron;
+    }
+
+    /**
+     * When the scheduler runs the watch next and, given its status, any scheduled run it has missed.
+     *
+     * @return WatchSchedule|null Null when the watches aren't scheduled
+     *
+     * @throws InvalidMonitorConfiguration When the expression is invalid
+     */
+    public function schedule(string $name, ?WatchStatus $status = null, ?DateTimeInterface $now = null): ?WatchSchedule
+    {
+        if (! $this->scheduled) {
+            return null;
+        }
+
+        $cron = new CronExpression($this->cron($name));
+        $now = DateTimeImmutable::createFromInterface($now ?? Date::now());
+        // The first run due after the last one started; a run that is still going, or holding up the next, isn't late
+        $missed = $status?->checkedAt === null
+            ? null
+            : DateTimeImmutable::createFromMutable($cron->getNextRunDate($status->checkedAt, 0, false, $this->timezone));
+
+        return new WatchSchedule(
+            (string) $cron->getExpression(),
+            $this->timezone,
+            DateTimeImmutable::createFromMutable($cron->getNextRunDate($now, 0, false, $this->timezone)),
+            $missed !== null && $now->getTimestamp() - $missed->getTimestamp() > static::OVERDUE_AFTER_SECONDS ? $missed : null,
+        );
     }
 
     /**

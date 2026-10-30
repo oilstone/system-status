@@ -9,9 +9,9 @@ use InvalidArgumentException;
 use Oilstone\SystemStatus\Exceptions\InvalidMonitorConfiguration;
 use Oilstone\SystemStatus\Exceptions\UnknownMonitorType;
 use Oilstone\SystemStatus\Exceptions\WatchHandlerFailed;
-use Oilstone\SystemStatus\MonitorFactory;
 use Oilstone\SystemStatus\Probe;
 use Oilstone\SystemStatus\Rating;
+use Oilstone\SystemStatus\SystemStatus;
 use Oilstone\SystemStatus\Tests\Fixtures\FakeMonitor;
 use Oilstone\SystemStatus\Tests\Fixtures\RecordingWatchHandler;
 use Oilstone\SystemStatus\Watch;
@@ -38,7 +38,7 @@ class WatcherTest extends TestCase
     {
         $this->cache = new Repository(new ArrayStore());
         $this->store = new WatchStore($this->cache);
-        $this->watcher = new Watcher(new MonitorFactory(), $this->store);
+        $this->watcher = new Watcher(new SystemStatus(), $this->store);
         RecordingWatchHandler::$calls = [];
     }
 
@@ -146,6 +146,53 @@ class WatcherTest extends TestCase
 
         $this->assertSame(Rating::Failed, $outcome->result?->rating);
         $this->assertSame(WatchState::Down, $outcome->state);
+    }
+
+    public function test_the_last_check_is_kept_to_explain_the_state(): void
+    {
+        $watch = $this->watch(['failures' => 3]);
+        $this->rating = null;
+
+        $this->watcher->run($watch);
+
+        $failed = $this->store->get('payments');
+
+        $this->assertSame(Rating::Failed, $failed->rating);
+        $this->assertSame('Payments refused the connection', $failed->error);
+        $this->assertIsFloat($failed->duration);
+        $this->assertSame(
+            ['rating' => 'failed', 'duration_ms' => $failed->duration, 'error' => 'Payments refused the connection'],
+            $failed->toArray()['last_check'],
+        );
+        $this->assertSame('Check failed', $failed->toArray(exposeErrors: false)['last_check']['error']);
+
+        $this->rating = Rating::Degraded;
+        $this->watcher->run($watch);
+
+        $this->assertSame(Rating::Degraded, $this->store->get('payments')->rating);
+        $this->assertNull($this->store->get('payments')->error);
+        $this->assertArrayNotHasKey('error', $this->store->get('payments')->toArray()['last_check']);
+
+        // A forced run doesn't check, so there is no last check to show
+        $this->store->force('payments', WatchState::Up);
+        $this->watcher->run($watch);
+
+        $this->assertNull($this->store->get('payments')->rating);
+        $this->assertNull($this->store->get('payments')->toArray()['last_check']);
+    }
+
+    public function test_a_watch_can_check_a_monitor_of_the_status(): void
+    {
+        $status = (new SystemStatus())->add(['class' => FakeMonitor::class, 'name' => 'Payments API', 'check' => function (Probe $probe) {
+            $probe->fail('Payments refused the connection');
+        }], 'services', 'payments');
+        $watcher = new Watcher($status, $this->store);
+
+        $outcome = $watcher->run(Watch::fromArray('payments', ['monitor' => 'services.payments']));
+
+        $this->assertSame('Payments API', $outcome->monitor->name());
+        $this->assertSame(WatchState::Down, $outcome->state);
+        $this->assertSame('Payments refused the connection', $this->store->get('payments')->error);
     }
 
     public function test_a_forced_state_applies_immediately_without_checking(): void
@@ -307,7 +354,7 @@ class WatcherTest extends TestCase
 
         $this->assertSame(WatchState::Up, $this->store->get('search')->state);
         $this->assertNull($this->store->get('search')->forced);
-        $this->assertSame(['state', 'failures', 'passes', 'checked_at'], array_keys($this->cache->get('system-status.watch.payments.state')));
+        $this->assertSame(['state', 'failures', 'passes', 'checked_at', 'rating', 'duration_ms', 'error'], array_keys($this->cache->get('system-status.watch.payments.state')));
         $this->assertSame(['state' => 'up', 'expires_at' => null], $this->cache->get('system-status.watch.payments.override'));
     }
 
@@ -326,7 +373,7 @@ class WatcherTest extends TestCase
     public function test_status_converts_to_an_array(): void
     {
         $this->assertSame(
-            ['state' => 'up', 'failures' => 0, 'passes' => 0, 'forced' => null, 'forced_until' => null, 'checked_at' => null],
+            ['state' => 'up', 'failures' => 0, 'passes' => 0, 'forced' => null, 'forced_until' => null, 'checked_at' => null, 'last_check' => null],
             $this->store->get('payments')->toArray(),
         );
     }

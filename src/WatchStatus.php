@@ -13,6 +13,9 @@ final class WatchStatus
     /**
      * @param DateTimeImmutable|null $checkedAt Null until the watch first runs
      * @param DateTimeImmutable|null $forcedUntil When the override clears itself; null when it lasts until cleared
+     * @param Rating|null $rating The last check's rating; null before the first check or when the last run was forced
+     * @param float|null $duration Milliseconds the last check took
+     * @param string|null $error Why the last check failed, when it threw
      */
     public function __construct(
         public readonly WatchState $state = WatchState::Up,
@@ -21,10 +24,16 @@ final class WatchStatus
         public readonly ?DateTimeImmutable $checkedAt = null,
         public readonly ?WatchState $forced = null,
         public readonly ?DateTimeImmutable $forcedUntil = null,
+        public readonly ?Rating $rating = null,
+        public readonly ?float $duration = null,
+        public readonly ?string $error = null,
     ) {
     }
 
-    public function toArray(): array
+    /**
+     * @param bool $exposeErrors Error messages can contain hostnames, usernames and paths
+     */
+    public function toArray(bool $exposeErrors = true): array
     {
         return [
             'state' => $this->state->value,
@@ -33,6 +42,11 @@ final class WatchStatus
             'forced' => $this->forced?->value,
             'forced_until' => $this->forcedUntil?->format(DateTimeInterface::ATOM),
             'checked_at' => $this->checkedAt?->format(DateTimeInterface::ATOM),
+            'last_check' => $this->rating === null ? null : array_filter([
+                'rating' => $this->rating->label(),
+                'duration_ms' => $this->duration,
+                'error' => $this->error === null ? null : ($exposeErrors ? $this->error : 'Check failed'),
+            ], fn (mixed $value) => $value !== null),
         ];
     }
 }

@@ -5,11 +5,12 @@ namespace Oilstone\SystemStatus\Integrations\Laravel\Http\Controllers;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Date;
 use InvalidArgumentException;
 use Oilstone\SystemStatus\Integrations\Laravel\Http\StatusQuery;
 use Oilstone\SystemStatus\Integrations\Laravel\Watches\WatchRegistry;
 use Oilstone\SystemStatus\SystemStatus;
-use Oilstone\SystemStatus\WatchStatus;
+use Throwable;
 
 class StatusController
 {
@@ -31,14 +32,20 @@ class StatusController
             return new JsonResponse(['error' => $e->getMessage()], 422, $headers, $options);
         }
 
-        $data = $report->toArray($query->failAt, (bool) ($settings['expose_errors'] ?? true));
+        $exposeErrors = (bool) ($settings['expose_errors'] ?? true);
+        $data = $report->toArray($query->failAt, $exposeErrors);
+        $now = Date::now();
 
         // Read from the store as the watches last left them; they never affect the outcome
-        if ($statuses = $watches->statuses()) {
-            $data['watches'] = array_map(
-                fn (?WatchStatus $status) => $status?->toArray() ?? ['error' => 'The watch state could not be read'],
-                $statuses,
-            );
+        foreach ($watches->statuses() as $name => $watch) {
+            try {
+                $schedule = $watches->schedule($name, $watch, $now)?->toArray();
+            } catch (Throwable) {
+                $schedule = null;
+            }
+
+            $data['watches'][$name] = ($watch?->toArray($exposeErrors) ?? ['error' => 'The watch state could not be read'])
+                + ['monitor' => $watches->monitorId($name, $status), 'schedule' => $schedule];
         }
 
         return new JsonResponse(
