@@ -6,6 +6,7 @@
      *     result is set once the monitor has run: state (operational, degraded or failing), rating, rating_label, duration,
      *     error (already hidden when errors aren't exposed), notes, meta (strings) and checked_at
      * @var array<string, string> $tones
+     * @var bool $onDemand Whether monitors only run when asked; otherwise they all run on every refresh, so rows have no buttons
      */
     $result = $monitor['result'];
 @endphp
@@ -43,9 +44,11 @@
         @else
             <span class="check__ran">Not run</span>
         @endif
-        <span class="check__actions">
-            <button type="button" class="button button--live" data-live="{{ $monitor['id'] }}" aria-pressed="false" title="Run this monitor again at every refresh">Live</button>
-            <button type="button" class="button" data-run="{{ $monitor['run_query'] }}">Run now</button>
-        </span>
+        @if ($onDemand)
+            <span class="check__actions">
+                <button type="button" class="button button--live" data-live="{{ $monitor['id'] }}" aria-pressed="false" title="Run this monitor again at every refresh">Live</button>
+                <button type="button" class="button" data-run="{{ $monitor['run_query'] }}" data-run-key="{{ $monitor['id'] }}">Run now</button>
+            </span>
+        @endif
     </div>
 </li>

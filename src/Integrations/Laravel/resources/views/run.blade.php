@@ -6,6 +6,7 @@
      *
      * @var list<array{slot: string, result: array, monitor: array|null}> $items monitor is null for a watch with its own monitor definition
      * @var array<string, string> $tones
+     * @var bool $onDemand See partials/monitor.blade.php
      */
 @endphp
 <ul>

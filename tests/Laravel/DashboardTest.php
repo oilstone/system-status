@@ -167,8 +167,10 @@ class DashboardTest extends TestCase
             $runs++;
         }]]]);
 
+        // Running them all again is a refresh, so the headline stays in step; there is nothing to run one at a time
         $this->dashboard()
-            ->assertSeeInOrder(['All systems operational', 'Monitors', 'All operational', 'Run all', 'Connections', 'Search', 'Optimal', 'Run now'])
+            ->assertSeeInOrder(['All systems operational', 'Monitors', 'All operational', 'data-refresh-now>Run all', 'Connections', 'Search', 'Optimal'], false)
+            ->assertDontSee('Run now')
             ->assertDontSee('Not run');
 
         $this->assertSame(1, $runs);
@@ -182,15 +184,15 @@ class DashboardTest extends TestCase
     public function test_monitors_can_be_made_live_only_when_watches_lead(): void
     {
         // Without watches every monitor runs on each refresh, so there is nothing to make live
-        $this->dashboard()->assertDontSee('data-live-seconds="', false);
+        $this->dashboard()->assertDontSee('data-live-seconds="', false)->assertDontSee('data-live="', false);
 
         $this->rebootWith(['system-status.watches.definitions' => ['deployed' => ['monitor' => 'connections.0']]]);
 
         $this->dashboard()
             ->assertSee('data-live-seconds="30"', false)
-            ->assertSeeInOrder(['Monitors', 'data-live=""', 'Live', 'Run all', 'data-live="connections.0"', 'Live', 'Run now'], false);
+            ->assertSeeInOrder(['Monitors', 'data-live=""', 'Live', 'data-run-key="*">Run all', 'data-live="connections.0"', 'Live', 'data-run-key="connections.0">Run now'], false);
 
-        $this->runFromDashboard('?monitor=connections.0')->assertSee('data-live="connections.0"', false);
+        $this->runFromDashboard('?monitor=connections.0')->assertSee('data-live="connections.0"', false)->assertSee('Run now');
 
         // Live monitors keep the refresh interval, or run every 30 seconds when the page doesn't refresh
         $this->rebootWith(['system-status.dashboard.refresh_seconds' => 10]);
@@ -213,7 +215,7 @@ class DashboardTest extends TestCase
             ->assertOk()
             ->assertHeader('Content-Type', 'text/html; charset=UTF-8')
             ->assertHeader('Referrer-Policy', 'no-referrer')
-            ->assertSeeInOrder(['data-monitor="connections.0"', 'data-state="operational"', 'Deployed', 'Optimal', 'Run now'], false)
+            ->assertSeeInOrder(['data-monitor="connections.0"', 'data-state="operational"', 'Deployed', 'Optimal'], false)
             ->assertSee('data-check-for="connections.0"', false)
             ->assertDontSee('Payments API');
 

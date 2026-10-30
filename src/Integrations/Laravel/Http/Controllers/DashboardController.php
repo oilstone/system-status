@@ -146,7 +146,11 @@ class DashboardController
             ];
         }
 
-        return $this->respond($this->view->make('system-status::run', ['items' => $items, 'tones' => static::TONES])->render());
+        return $this->respond($this->view->make('system-status::run', [
+            'items' => $items,
+            'tones' => static::TONES,
+            'onDemand' => $watches->names() !== [],
+        ])->render());
     }
 
     protected function respond(string $body, int $status = 200, string $type = 'text/html'): Response

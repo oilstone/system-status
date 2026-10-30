@@ -246,8 +246,6 @@
         .button:hover { background: var(--divider); }
         .button:disabled { opacity: .6; cursor: progress; }
 
-        /* Live toggles only show where monitors don't already run on every refresh */
-        html:not([data-live-seconds]) [data-live] { display: none; }
         .button--live { display: inline-flex; gap: 6px; align-items: center; }
         .button--live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--grey); }
         .button--live:disabled { cursor: default; }
@@ -489,7 +487,7 @@
                                             <time datetime="{{ $watch['checked_at']->format(DATE_ATOM) }}" data-time-ago="Last checked">{{ $clock($watch['checked_at']) }}</time>
                                         @endif
                                     </span>
-                                    <button type="button" class="button" data-run="{{ $watch['check_query'] }}" title="Runs the monitor without changing the watch">Check now</button>
+                                    <button type="button" class="button" data-run="{{ $watch['check_query'] }}" data-run-key="{{ $watch['check_slot'] }}" title="Runs the monitor without changing the watch">Check now</button>
                                 </div>
                             </li>
                         @endforeach
@@ -503,8 +501,13 @@
                 <header class="section-header">
                     <h2>Monitors</h2>
                     <span class="pill tone-{{ $tones[$monitorSummary['state']] }}" data-monitors-pill>{{ $monitorSummary['label'] }}</span>
-                    <button type="button" class="button button--live" data-live="" aria-pressed="false" title="Run every monitor again at every refresh">Live</button>
-                    <button type="button" class="button" data-run="">Run all</button>
+                    @if ($onDemand)
+                        <button type="button" class="button button--live" data-live="" aria-pressed="false" title="Run every monitor again at every refresh">Live</button>
+                        <button type="button" class="button" data-run="" data-run-key="*">Run all</button>
+                    @else
+                        {{-- Every monitor runs as the page loads, so running them all again is a refresh, which keeps the headline in step --}}
+                        <button type="button" class="button" data-refresh-now>Run all</button>
+                    @endif
                 </header>
 
                 @foreach ($categories as $category)
@@ -554,7 +557,8 @@
         var missedLive = false;
         // Monitors re-run at every live tick: all of them, or those picked one by one. Kept in ?live= so a page can be bookmarked live
         var live = { all: false, ids: {} };
-        // Runs waiting for a response, by query, so a slow monitor isn't run again before it answers
+        // Runs waiting for a response, counted by the monitor they run ("*" for all of them, "watch:name" for a watch's
+        // own monitor), so a live run doesn't start on a monitor that hasn't answered from any run yet
         var running = {};
         // Sections the viewer has opened or closed, which refreshes and runs then leave alone
         var toggled = {};
@@ -675,7 +679,7 @@
         }
 
         // Run one monitor (monitor=), a watch's monitor (watch=) or all of them (an empty query), and put the results in place
-        function runQuery(query) {
+        function runQuery(query, key) {
             var params = new URLSearchParams(window.location.search);
             var url = new URL(runUrl, window.location.href);
 
@@ -685,7 +689,7 @@
             });
 
             url.search = params.toString();
-            running[query] = true;
+            running[key] = (running[key] || 0) + 1;
 
             return fetch(url.toString(), { headers: { Accept: 'text/html' }, cache: 'no-store', credentials: 'same-origin' })
                 .then(function (response) {
@@ -719,12 +723,26 @@
                     showLocalTimes();
                 })
                 .then(function () {
-                    delete running[query];
+                    finished(key);
                 }, function (error) {
-                    delete running[query];
+                    finished(key);
 
                     throw error;
                 });
+        }
+
+        function finished(key) {
+            if (--running[key] <= 0) {
+                delete running[key];
+            }
+        }
+
+        // Whether a run of these monitors would overlap one still waiting: all of them overlap every monitor, though
+        // not a watch's own monitor
+        function overlaps(key) {
+            return Object.keys(running).some(function (other) {
+                return other === key || other === '*' || (key === '*' && other.indexOf('watch:') !== 0);
+            });
         }
 
         function run(button) {
@@ -738,7 +756,8 @@
             rows.forEach(function (row) { row.classList.add('is-running'); });
             button.textContent = 'Running…';
 
-            runQuery(query)
+            // Runs asked for are always made; only live runs give way to ones still waiting
+            runQuery(query, button.getAttribute('data-run-key'))
                 .catch(function (error) {
                     showNotice('Couldn’t run the check: ' + error.message);
                 })
@@ -750,23 +769,22 @@
                 });
         }
 
-        function liveQueries() {
-            return live.all ? [''] : Object.keys(live.ids).map(function (id) {
-                return new URLSearchParams({ monitor: id }).toString();
-            });
+        // A live run's query and the monitors it runs
+        function liveRun(id) {
+            return id === '*' ? ['', '*'] : [new URLSearchParams({ monitor: id }).toString(), id];
         }
 
-        // Run the live monitors, skipping any still waiting for their last run, quietly so rows don't flicker
-        function runLive(queries) {
+        // Run the live monitors, skipping any still waiting for a run, quietly so rows don't flicker
+        function runLive(ids) {
             if (document.hidden) {
                 missedLive = true;
 
                 return;
             }
 
-            (queries || liveQueries()).forEach(function (query) {
-                if (!running[query] && !running['']) {
-                    runQuery(query).catch(function (error) {
+            (ids || (live.all ? ['*'] : Object.keys(live.ids))).map(liveRun).forEach(function (run) {
+                if (!overlaps(run[1])) {
+                    runQuery(run[0], run[1]).catch(function (error) {
                         showNotice('Couldn’t run a live check at ' + new Date().toLocaleTimeString() + ': ' + error.message);
                     });
                 }
@@ -806,7 +824,7 @@
             showLive();
 
             if (on) {
-                runLive(id === '' ? [''] : [new URLSearchParams({ monitor: id }).toString()]);
+                runLive([id === '' ? '*' : id]);
             }
         }
 
@@ -888,6 +906,7 @@
             var summary = event.target.closest('summary');
             var button = event.target.closest('[data-run]');
             var toggle = event.target.closest('[data-live]');
+            var refreshNow = event.target.closest('[data-refresh-now]');
             var link = event.target.closest('a[href^="#"]');
 
             if (summary && summary.parentElement.hasAttribute('data-section')) {
@@ -904,6 +923,11 @@
                 toggleLive(toggle);
             }
 
+            if (refreshNow) {
+                event.preventDefault();
+                refresh();
+            }
+
             if (link) {
                 // Open the section a linked row is in, so the browser can scroll to it
                 var target = document.getElementById(decodeURIComponent(link.getAttribute('href').slice(1)));
@@ -914,11 +938,6 @@
                     toggled[details.id] = true;
                 }
             }
-        });
-
-        document.querySelector('[data-refresh-now]').addEventListener('click', function (event) {
-            event.preventDefault();
-            refresh();
         });
 
         if (seconds > 0) {

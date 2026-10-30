@@ -549,7 +549,7 @@ class WatchesTest extends TestCase
         $this->dashboard()
             ->assertSeeInOrder(['id="watch-payments"', 'checks', 'href="#monitor-services.payments"', 'Services › Payments API'], false)
             ->assertSeeInOrder(['id="category-services"', 'open', 'id="monitor-services.payments"', 'href="#watch-payments"', 'Watched by Payments', 'Down'], false)
-            ->assertSeeInOrder(['data-check-slot="services.payments"', 'data-check-slot="watch:search"'], false);
+            ->assertSeeInOrder(['data-check-slot="services.payments"', 'data-run-key="services.payments"', 'data-check-slot="watch:search"', 'data-run-key="watch:search"'], false);
     }
 
     public function test_checking_a_watch_from_the_dashboard_runs_its_monitor_without_changing_it(): void
