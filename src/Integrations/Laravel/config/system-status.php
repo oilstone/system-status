@@ -127,11 +127,19 @@ return [
     | run the watches with system-status:watch yourself. Force one up or
     | down with system-status:force.
     |
+    | With run_in_background on, scheduled watches run in parallel, so a
+    | slow check doesn't hold up the rest of the schedule. Laravel then
+    | runs schedule:finish as each one ends, to release its overlap
+    | mutex, and schedule:run doesn't wait for them or show their output
+    | or exit codes; failures are still reported to your exception
+    | handler. Set it to false to run them one after another.
+    |
     */
 
     'watches' => [
         'cache_store' => env('SYSTEM_STATUS_WATCH_CACHE_STORE'),
         'schedule' => true,
+        'run_in_background' => env('SYSTEM_STATUS_WATCH_RUN_IN_BACKGROUND', true),
         'definitions' => [
             // 'payments' => [
             //     'monitor' => ['type' => 'http', 'url' => 'https://payments.example.com/health'],

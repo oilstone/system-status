@@ -2,16 +2,20 @@
 
 namespace Oilstone\SystemStatus\Tests\Laravel;
 
+use Illuminate\Console\Events\ScheduledBackgroundTaskFinished;
+use Illuminate\Console\Scheduling\CacheSchedulingMutex;
 use Illuminate\Console\Scheduling\Event as ScheduledEvent;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Testing\TestResponse;
 use InvalidArgumentException;
 use Mockery;
 use Oilstone\SystemStatus\Exceptions\UnknownMonitorType;
 use Oilstone\SystemStatus\Exceptions\WatchHandlerFailed;
+use Oilstone\SystemStatus\Integrations\Laravel\Console\WatchCommand;
 use Oilstone\SystemStatus\Integrations\Laravel\Events\MonitorRecovered;
 use Oilstone\SystemStatus\Integrations\Laravel\Events\MonitorWentDown;
 use Oilstone\SystemStatus\Tests\Fixtures\RecordingWatchHandler;
@@ -299,8 +303,70 @@ class WatchesTest extends TestCase
         $this->assertSame('*/5 * * * *', $events[0]->expression);
         $this->assertTrue($events[0]->onOneServer);
         $this->assertTrue($events[0]->withoutOverlapping);
+        $this->assertSame(WatchCommand::LOCK_SECONDS / 60, $events[0]->expiresAt, 'The overlap mutex expires with the command lock');
+        $this->assertTrue($events[0]->runInBackground);
         $this->assertStringContainsString("system-status:watch 'search'", $events[1]->command);
         $this->assertSame('* * * * *', $events[1]->expression);
+        $this->assertTrue($events[1]->runInBackground);
+    }
+
+    public function test_scheduled_watches_can_run_one_after_another(): void
+    {
+        $this->rebootWith(['system-status.watches.run_in_background' => false]);
+
+        $events = $this->scheduled();
+
+        $this->assertCount(2, $events);
+        $this->assertFalse($events[0]->runInBackground);
+        $this->assertFalse($events[1]->runInBackground);
+        $this->assertTrue($events[0]->withoutOverlapping);
+    }
+
+    public function test_each_scheduled_watch_keeps_its_mutex_name_every_minute(): void
+    {
+        $this->travelTo('2026-10-30 12:05:42');
+
+        $event = $this->scheduled()[0];
+
+        $this->assertSame('system-status:watch:payments', $event->mutexName());
+        $this->assertSame('system-status:watch:search', $this->scheduled()[1]->mutexName());
+
+        $this->travelTo('2026-10-30 12:06:03');
+        $this->app->forgetInstance(Schedule::class);
+
+        $later = $this->scheduled()[0];
+
+        $this->assertStringContainsString('--occurrence=202610301206', $later->command);
+        $this->assertSame('system-status:watch:payments', $later->mutexName());
+
+        // onOneServer() still claims each minute separately
+        $servers = $this->app->make(CacheSchedulingMutex::class);
+
+        $this->assertTrue($servers->create($event, Date::parse('2026-10-30 12:05:00')));
+        $this->assertFalse($servers->create($later, Date::parse('2026-10-30 12:05:00')));
+        $this->assertTrue($servers->create($later, Date::parse('2026-10-30 12:06:00')));
+    }
+
+    public function test_schedule_finish_releases_a_background_run_that_ends_in_a_later_minute(): void
+    {
+        $this->travelTo('2026-10-30 12:05:42');
+
+        $event = $this->scheduled()[0];
+
+        // As schedule:run does before starting the command in the background
+        $this->assertTrue($event->mutex->create($event));
+        $this->assertTrue($event->mutex->exists($event));
+
+        $this->travelTo('2026-10-30 12:07:10');
+        $this->app->forgetInstance(Schedule::class);
+
+        Event::fake([ScheduledBackgroundTaskFinished::class]);
+
+        $this->artisan('schedule:finish', ['id' => 'system-status:watch:payments', 'code' => 0])->assertSuccessful();
+
+        Event::assertDispatchedTimes(ScheduledBackgroundTaskFinished::class, 1);
+        Event::assertDispatched(ScheduledBackgroundTaskFinished::class, fn ($finished) => str_contains((string) $finished->task->command, '--occurrence=202610301207'));
+        $this->assertFalse($event->mutex->exists($event), 'The overlap mutex is released');
     }
 
     public function test_nothing_is_scheduled_without_definitions_or_when_turned_off(): void

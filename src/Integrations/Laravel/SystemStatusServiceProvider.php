@@ -93,7 +93,9 @@ class SystemStatusServiceProvider extends ServiceProvider
             return;
         }
 
-        $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+        $background = (bool) ($settings['run_in_background'] ?? true);
+
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule) use ($background): void {
             $watches = $this->app->make(WatchRegistry::class);
             // The schedule is built as schedule:run starts, so every server names the same minute. onOneServer()
             // uses the default cache, which may not be shared, so the command also claims the minute in the
@@ -101,10 +103,18 @@ class SystemStatusServiceProvider extends ServiceProvider
             $occurrence = Date::now()->format('YmdHi');
 
             foreach ($watches->names() as $name) {
-                $schedule->command('system-status:watch', [$name, '--occurrence' => $occurrence])
+                // The command changes every minute, so the mutex is named after the watch instead. Overlaps are then
+                // prevented across minutes, and schedule:finish finds a background run that ends in a later minute.
+                // onOneServer() still applies per minute, as the scheduler appends the minute to this name.
+                $event = $schedule->command('system-status:watch', [$name, '--occurrence' => $occurrence])
                     ->cron($watches->cron($name))
+                    ->createMutexNameUsing('system-status:watch:' . $name)
                     ->onOneServer()
-                    ->withoutOverlapping();
+                    ->withoutOverlapping((int) ceil(WatchCommand::LOCK_SECONDS / 60));
+
+                if ($background) {
+                    $event->runInBackground();
+                }
             }
         });
     }

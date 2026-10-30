@@ -99,6 +99,7 @@ A watch checks one monitor on a schedule and tracks whether it is up or down, so
 'watches' => [
     'cache_store' => env('SYSTEM_STATUS_WATCH_CACHE_STORE'),
     'schedule' => true,
+    'run_in_background' => env('SYSTEM_STATUS_WATCH_RUN_IN_BACKGROUND', true),
     'definitions' => [
         'payments' => [
             'monitor' => ['type' => 'http', 'url' => 'https://payments.example.com/health'],
@@ -150,7 +151,11 @@ When a watch goes down or recovers, Laravel's `MonitorWentDown` or `MonitorRecov
 
 State is kept in `watches.cache_store` (`SYSTEM_STATUS_WATCH_CACHE_STORE`, the default store when null). Unlike `ping.cache_store`, it must be shared by every server and support atomic locks, such as `redis`, `memcached` or `database`.
 
-When `watches.schedule` is on (the default), each watch is added to Laravel's scheduler with its `cron`, on one server at a time and without overlapping, so make sure `schedule:run` is running. Each scheduled run also claims its minute in `watches.cache_store`, so it runs once across your servers even if Laravel's default cache, which `onOneServer()` relies on, isn't shared; otherwise every server would check it and the thresholds would be reached too soon. To run watches yourself instead, turn it off and call the command:
+When `watches.schedule` is on (the default), each watch is added to Laravel's scheduler with its `cron`, on one server at a time and without overlapping, so make sure `schedule:run` is running. Each scheduled run also claims its minute in `watches.cache_store`, so it runs once across your servers even if Laravel's default cache, which `onOneServer()` relies on, isn't shared; otherwise every server would check it and the thresholds would be reached too soon.
+
+Scheduled watches run in the background by default, so a check waiting out its timeouts doesn't hold up the other watches or the rest of your schedule. Laravel runs `schedule:finish` as each one ends; `schedule:run` doesn't wait for them or show their output, but the command still reports failures to your exception handler. Each watch's overlap mutex is named `system-status:watch:{name}`, so it holds across minutes even though each run's command line names its minute, and it expires after five minutes, with the command's own lock, so a crashed run doesn't block the watch for long. To run them one after another instead, set `watches.run_in_background` to false (`SYSTEM_STATUS_WATCH_RUN_IN_BACKGROUND=false`).
+
+To run watches yourself instead, turn `watches.schedule` off and call the command:
 
 ```bash
 php artisan system-status:watch            # every watch

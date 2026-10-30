@@ -23,8 +23,9 @@ class WatchCommand extends Command
 {
     /**
      * Long enough to outlast any check and handler, short enough that a crashed run soon stops blocking the next.
+     * The scheduler's overlap mutex for each watch expires with it.
      */
-    protected const LOCK_SECONDS = 300;
+    public const LOCK_SECONDS = 300;
 
     /**
      * How long a claimed occurrence is remembered; well past any clock drift between servers.
