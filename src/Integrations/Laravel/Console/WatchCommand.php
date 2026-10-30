@@ -26,7 +26,14 @@ class WatchCommand extends Command
      */
     protected const LOCK_SECONDS = 300;
 
-    protected $signature = 'system-status:watch {watch? : Only run this watch}';
+    /**
+     * How long a claimed occurrence is remembered; well past any clock drift between servers.
+     */
+    protected const OCCURRENCE_SECONDS = 3600;
+
+    protected $signature = 'system-status:watch
+        {watch? : Only run this watch}
+        {--occurrence= : The scheduled minute (YmdHi) this run is for, so it runs once across servers}';
 
     protected $description = 'Run the system status watches, or one of them';
 
@@ -36,6 +43,14 @@ class WatchCommand extends Command
 
         if (is_string($name) && ! $watches->has($name)) {
             $this->components->error(sprintf('No watch named "%s" is defined', $name));
+
+            return self::INVALID;
+        }
+
+        $occurrence = $this->option('occurrence');
+
+        if ($occurrence !== null && (! is_string($occurrence) || preg_match('/^\d{12}$/', $occurrence) !== 1)) {
+            $this->components->error('The occurrence must be a minute in the form YmdHi, such as 202601311430');
 
             return self::INVALID;
         }
@@ -52,7 +67,7 @@ class WatchCommand extends Command
 
         foreach ($names as $name) {
             try {
-                $this->runLocked($watches->get($name), $watcher, $cache->store($config->get('system-status.watches.cache_store')));
+                $this->runLocked($watches->get($name), $watcher, $cache->store($config->get('system-status.watches.cache_store')), $occurrence);
             } catch (Throwable $e) {
                 $failed = true;
 
@@ -65,9 +80,10 @@ class WatchCommand extends Command
     }
 
     /**
-     * Hold a lock while the watch runs, so a manual run can't race a scheduled one on any server.
+     * Hold a lock while the watch runs, so a manual run can't race a scheduled one on any server, and run each
+     * scheduled occurrence once even when servers don't share the scheduler's cache.
      */
-    protected function runLocked(Watch $watch, Watcher $watcher, CacheRepository $cache): void
+    protected function runLocked(Watch $watch, Watcher $watcher, CacheRepository $cache, ?string $occurrence): void
     {
         $locks = $cache->getStore();
 
@@ -84,6 +100,12 @@ class WatchCommand extends Command
         }
 
         try {
+            if ($occurrence !== null && ! $cache->add('system-status.watch.' . $watch->name . '.ran.' . $occurrence, true, static::OCCURRENCE_SECONDS)) {
+                $this->components->info(sprintf('Skipped the %s watch, which has already run for %s', $watch->name, $occurrence));
+
+                return;
+            }
+
             $this->print($watch, $watcher->run($watch));
         } catch (WatchHandlerFailed $e) {
             $this->print($watch, $e->outcome);

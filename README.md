@@ -150,7 +150,7 @@ When a watch goes down or recovers, Laravel's `MonitorWentDown` or `MonitorRecov
 
 State is kept in `watches.cache_store` (`SYSTEM_STATUS_WATCH_CACHE_STORE`, the default store when null). Unlike `ping.cache_store`, it must be shared by every server and support atomic locks, such as `redis`, `memcached` or `database`.
 
-When `watches.schedule` is on (the default), each watch is added to Laravel's scheduler with its `cron`, on one server at a time and without overlapping, so make sure `schedule:run` is running. To run watches yourself instead, turn it off and call the command:
+When `watches.schedule` is on (the default), each watch is added to Laravel's scheduler with its `cron`, on one server at a time and without overlapping, so make sure `schedule:run` is running. Each scheduled run also claims its minute in `watches.cache_store`, so it runs once across your servers even if Laravel's default cache, which `onOneServer()` relies on, isn't shared; otherwise every server would check it and the thresholds would be reached too soon. To run watches yourself instead, turn it off and call the command:
 
 ```bash
 php artisan system-status:watch            # every watch

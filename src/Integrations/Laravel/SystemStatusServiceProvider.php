@@ -5,6 +5,7 @@ namespace Oilstone\SystemStatus\Integrations\Laravel;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Foundation\CachesRoutes;
+use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Oilstone\SystemStatus\Integrations\Laravel\Console\CheckCommand;
@@ -94,9 +95,13 @@ class SystemStatusServiceProvider extends ServiceProvider
 
         $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
             $watches = $this->app->make(WatchRegistry::class);
+            // The schedule is built as schedule:run starts, so every server names the same minute. onOneServer()
+            // uses the default cache, which may not be shared, so the command also claims the minute in the
+            // watch store to make sure only one server runs it.
+            $occurrence = Date::now()->format('YmdHi');
 
             foreach ($watches->names() as $name) {
-                $schedule->command('system-status:watch', [$name])
+                $schedule->command('system-status:watch', [$name, '--occurrence' => $occurrence])
                     ->cron($watches->cron($name))
                     ->onOneServer()
                     ->withoutOverlapping();

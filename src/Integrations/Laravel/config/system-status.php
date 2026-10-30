@@ -122,9 +122,10 @@ return [
     | State is kept in cache_store (the default store when null). Unlike
     | ping.cache_store, it must be shared by every server and support
     | atomic locks, e.g. redis, memcached or database. Each watch runs on
-    | one server at a time. Set schedule to false to run the watches with
-    | system-status:watch yourself. Force one up or down with
-    | system-status:force.
+    | one server at a time, and each scheduled run once across servers,
+    | even when the default cache isn't shared. Set schedule to false to
+    | run the watches with system-status:watch yourself. Force one up or
+    | down with system-status:force.
     |
     */
 

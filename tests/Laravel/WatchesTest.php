@@ -115,6 +115,34 @@ class WatchesTest extends TestCase
         $this->assertTrue(Cache::store('array')->lock('system-status.watch.payments.lock', 60)->get(), 'The lock is released after the run');
     }
 
+    public function test_each_scheduled_occurrence_runs_once(): void
+    {
+        $this->artisan('system-status:watch payments --occurrence=202610301205')->assertSuccessful();
+
+        $this->artisan('system-status:watch --occurrence=202610301205')
+            ->expectsOutputToContain('Skipped the payments watch, which has already run for 202610301205')
+            ->expectsOutputToContain('Search index')
+            ->assertSuccessful();
+
+        $this->assertCount(1, RecordingWatchHandler::$calls);
+        $this->assertSame(1, $this->store()->get('payments')->passes);
+
+        $this->artisan('system-status:watch payments --occurrence=202610301206')->assertSuccessful();
+        $this->artisan('system-status:watch payments')->assertSuccessful();
+
+        $this->assertCount(3, RecordingWatchHandler::$calls);
+        $this->assertTrue(Cache::store('array')->lock('system-status.watch.payments.lock', 60)->get(), 'The lock is released after a skipped run');
+    }
+
+    public function test_the_occurrence_must_be_a_minute(): void
+    {
+        $this->artisan('system-status:watch payments --occurrence=now')
+            ->expectsOutputToContain('The occurrence must be a minute in the form YmdHi')
+            ->assertExitCode(2);
+
+        $this->assertSame([], RecordingWatchHandler::$calls);
+    }
+
     public function test_a_monitor_that_cannot_be_built_fails_and_is_reported(): void
     {
         $this->watches(['payments' => ['monitor' => ['type' => 'nope'], 'handler' => RecordingWatchHandler::class]]);
@@ -262,10 +290,12 @@ class WatchesTest extends TestCase
 
     public function test_each_watch_is_scheduled_on_one_server_without_overlapping(): void
     {
+        $this->travelTo('2026-10-30 12:05:42');
+
         $events = $this->scheduled();
 
         $this->assertCount(2, $events);
-        $this->assertStringContainsString("system-status:watch 'payments'", $events[0]->command);
+        $this->assertStringContainsString("system-status:watch 'payments' --occurrence=202610301205", $events[0]->command);
         $this->assertSame('*/5 * * * *', $events[0]->expression);
         $this->assertTrue($events[0]->onOneServer);
         $this->assertTrue($events[0]->withoutOverlapping);
